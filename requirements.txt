@@ -1,0 +1,10 @@
+# Python dependencies for the CARE-INDIA analysis code (Python 3.12).
+# Versions below are those used for the published analysis; newer minor versions are generally compatible.
+numpy
+pandas
+scikit-learn>=1.8
+shap>=0.51
+matplotlib
+scipy
+openpyxl
+

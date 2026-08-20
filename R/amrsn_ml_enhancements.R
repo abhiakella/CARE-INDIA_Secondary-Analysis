@@ -1,0 +1,403 @@
+# CARE-INDIA (Carbapenem resistance among Gram-negative ESKAPEE pathogens in India, 2017-2024)
+# R ML modules: auto.arima + linear-mixed-model forecast ensemble, clustering/NMF resistance archetypes, and PELT changepoints
+# Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
+# License: MIT (see LICENSE)
+
+library(tidyverse)
+library(scales)
+
+ensure_pkgs <- function(pkgs) {
+  for (p in pkgs) {
+    if (!requireNamespace(p, quietly = TRUE)) {
+      tryCatch(
+        install.packages(p, repos = "https://cloud.r-project.org", quiet = TRUE),
+        error = function(e) invisible(NULL)
+      )
+    }
+  }
+}
+
+ensure_pkgs(c("forecast", "changepoint", "cluster", "lme4"))
+
+library(forecast)
+library(changepoint)
+library(cluster)
+library(lme4)
+
+root <- getwd()
+if (!file.exists(file.path(root, "R", "amrsn_data_shared.R"))) {
+  stop("Run from project root; R/amrsn_data_shared.R not found.")
+}
+source(file.path(root, "R", "amrsn_data_shared.R"))
+
+dir.create("output/ml", showWarnings = FALSE, recursive = TRUE)
+
+poster_bg <- "#3C3C3C"
+poster_red <- "#8B0000"
+poster_text <- "#E8E8E8"
+poster_white <- "#FFFFFF"
+poster_grid <- "#525252"
+
+theme_ml <- theme_minimal(base_size = 11) +
+  theme(
+    plot.background = element_rect(fill = poster_bg, colour = NA),
+    panel.background = element_rect(fill = poster_bg, colour = NA),
+    panel.grid.major = element_line(colour = poster_grid, linewidth = 0.3),
+    text = element_text(colour = poster_text),
+    plot.title = element_text(colour = poster_white, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, colour = "#AAAAAA", size = 9),
+    axis.text = element_text(colour = poster_text),
+    axis.title = element_text(colour = poster_text),
+    legend.position = "bottom",
+    legend.background = element_rect(fill = poster_bg, colour = NA)
+  )
+
+theme_ml_light <- theme_minimal(base_size = 11) +
+  theme(
+    plot.background  = element_rect(fill = "white", colour = NA),
+    panel.background = element_rect(fill = "white", colour = NA),
+    panel.grid.major = element_line(colour = "grey85", linewidth = 0.3),
+    text             = element_text(colour = "#1f1f1f"),
+    plot.title       = element_text(colour = "#1f1f1f", face = "bold", hjust = 0.5),
+    plot.subtitle    = element_text(hjust = 0.5, colour = "grey40", size = 9),
+    axis.text        = element_text(colour = "#1f1f1f"),
+    axis.title       = element_text(colour = "#1f1f1f"),
+    legend.position  = "bottom",
+    legend.background = element_rect(fill = "white", colour = NA)
+  )
+
+# MODULE 8: Resistance forecasting (auto.arima + hierarchical LMM ensemble)
+cat("\n=== MODULE 8: RESISTANCE FORECASTING ===\n")
+
+full_long_ml <- full_long %>%
+  mutate(pair_id = paste(organism, drug, sep = " | "))
+
+forecast_horizon <- 4L
+last_y <- max(full_long_ml$year, na.rm = TRUE)
+future_years <- (last_y + 1L):(last_y + forecast_horizon)
+
+arima_block <- full_long_ml %>%
+  group_by(organism, drug, pair_id) %>%
+  group_modify(function(.x, .y) {
+    yv <- .x$res_pct
+    w <- .x$tested
+    yrs <- .x$year
+    if (length(unique(yv)) == 1L || stats::sd(yv) < 1e-6) {
+      pred <- rep(yv[1], forecast_horizon)
+      return(tibble(
+        year = future_years,
+        pred_arima = pmax(0, pmin(100, pred)),
+        lo80 = pmax(0, pred - 3), hi80 = pmin(100, pred + 3),
+        lo95 = pmax(0, pred - 5), hi95 = pmin(100, pred + 5)
+      ))
+    }
+    ts_y <- stats::ts(yv, start = min(yrs), frequency = 1)
+    fit <- tryCatch(forecast::auto.arima(ts_y, stepwise = TRUE, approximation = TRUE),
+                    error = function(e) NULL)
+    if (is.null(fit)) {
+      m <- stats::lm(res_pct ~ year, data = .x, weights = w)
+      nd <- tibble(year = future_years)
+      pr <- predict(m, newdata = nd, interval = "prediction", level = 0.95)
+      pred <- pr[, "fit"]
+      lo95 <- pr[, "lwr"]
+      hi95 <- pr[, "upr"]
+      lo80 <- pred - 1.28 * (hi95 - pred) / 1.96
+      hi80 <- pred + 1.28 * (hi95 - pred) / 1.96
+    } else {
+      fc <- forecast::forecast(fit, h = forecast_horizon, level = c(80, 95))
+      pred <- as.numeric(fc$mean)
+      lo80 <- fc$lower[, 1]
+      hi80 <- fc$upper[, 1]
+      lo95 <- fc$lower[, 2]
+      hi95 <- fc$upper[, 2]
+    }
+    tibble(
+      year = future_years,
+      pred_arima = pmax(0, pmin(100, pred)),
+      lo80 = pmax(0, pmin(100, lo80)),
+      hi80 = pmax(0, pmin(100, hi80)),
+      lo95 = pmax(0, pmin(100, lo95)),
+      hi95 = pmax(0, pmin(100, hi95))
+    )
+  }) %>%
+  ungroup()
+
+# Hierarchical pooling: random intercept and slope per organism-drug pair
+fit_lmer <- tryCatch(
+  lme4::lmer(
+    res_pct ~ year + (year | pair_id),
+    data = full_long_ml,
+    weights = full_long_ml$tested,
+    control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+  ),
+  error = function(e) NULL
+)
+
+pair_map <- full_long_ml %>% distinct(organism, drug, pair_id)
+newd <- tidyr::crossing(pair_map, year = future_years)
+
+if (!is.null(fit_lmer)) {
+  pred_lmer <- as.numeric(stats::predict(fit_lmer, newdata = newd, re.form = NULL))
+  pred_lmer <- pmax(0, pmin(100, pred_lmer))
+} else {
+  fg <- lm(res_pct ~ year + pair_id, data = full_long_ml, weights = tested)
+  pred_lmer <- pmax(0, pmin(100, as.numeric(stats::predict(fg, newdata = newd))))
+}
+
+forecast_tbl <- newd %>%
+  mutate(pred_lmer = pred_lmer) %>%
+  left_join(arima_block, by = c("organism", "drug", "pair_id", "year")) %>%
+  mutate(
+    pred_ensemble = (pred_arima + pred_lmer) / 2,
+    interval_mid_80 = (hi80 - lo80) / 2
+  )
+
+write_csv(forecast_tbl, "output/ml/table_forecast_resistance_2025_2028.csv")
+
+hist_fc <- full_long_ml %>%
+  select(organism, drug, year, res_pct) %>%
+  rename(observed = res_pct)
+
+fig_forecast <- forecast_tbl %>%
+  ggplot(aes(x = year)) +
+  geom_ribbon(aes(ymin = lo80, ymax = hi80), alpha = 0.25, fill = "#48C9B0") +
+  geom_line(aes(y = pred_ensemble, colour = drug), linewidth = 0.8) +
+  geom_point(aes(y = pred_ensemble, colour = drug), size = 1.5) +
+  geom_line(
+    data = hist_fc,
+    aes(x = year, y = observed, colour = drug),
+    linewidth = 0.5, linetype = "dotted", alpha = 0.7
+  ) +
+  facet_wrap(~organism, scales = "free_y", ncol = 2) +
+  scale_x_continuous(breaks = seq(2017, 2030, by = 1)) +
+  labs(
+    title = "Projected resistance (%) - ARIMA + hierarchical LM ensemble",
+    subtitle = "Shaded: 80% PI (ARIMA). Historic observations: dotted.",
+    x = NULL, y = "Resistance (%)", colour = "Drug"
+  ) +
+  theme_ml +
+  theme(legend.position = "none")
+
+ggsave("output/ml/fig_forecast_resistance_facets.png", fig_forecast, width = 12, height = 10, dpi = 300)
+ggsave("output/ml/fig_forecast_resistance_facets.pdf", fig_forecast, width = 12, height = 10)
+ggsave("output/ml/fig_forecast_resistance_facets_light.png",
+       fig_forecast + theme_ml_light, width = 12, height = 10, dpi = 300)
+ggsave("output/ml/fig_forecast_resistance_facets_light.pdf",
+       fig_forecast + theme_ml_light, width = 12, height = 10)
+
+cat("  Wrote output/ml/table_forecast_resistance_2025_2028.csv and fig_forecast_*.\n")
+
+# MODULE 9: Clustering (hierarchical, k-medoids) + NMF archetypes
+cat("\n=== MODULE 9: CLUSTERING / ARCHETYPES ===\n")
+
+# 2024 susceptibility matrix: cluster organisms by drug profile (wide)
+abg_wide_2024 <- full_long %>%
+  filter(year == 2024) %>%
+  select(organism, drug, susc_pct) %>%
+  pivot_wider(names_from = drug, values_from = susc_pct)
+
+org_prof <- abg_wide_2024 %>%
+  tibble::column_to_rownames("organism")
+org_prof_imp <- org_prof
+for (j in seq_len(ncol(org_prof_imp))) {
+  ind <- is.na(org_prof_imp[, j])
+  org_prof_imp[ind, j] <- mean(org_prof_imp[, j], na.rm = TRUE)
+}
+
+d_org <- dist(org_prof_imp, method = "euclidean")
+hc_org <- hclust(d_org, method = "average")
+write_csv(
+  tibble(order = hc_org$order, organism = rownames(org_prof_imp)[hc_org$order]),
+  "output/ml/table_hclust_organism_order.csv"
+)
+
+png("output/ml/fig_dendrogram_organisms_2024.png", width = 2400, height = 1400, res = 200)
+plot(hc_org, main = "Hierarchical clustering - organism antibiogram profiles (2024)",
+     xlab = "", sub = "")
+dev.off()
+
+# k-medoids on scaled features (organisms)
+set.seed(42)
+pam_k <- cluster::pam(scale(as.matrix(org_prof_imp)), k = 3)
+org_clusters <- tibble(
+  organism = rownames(org_prof_imp),
+  pam_cluster = as.integer(pam_k$clustering)
+)
+write_csv(org_clusters, "output/ml/table_pam_organism_clusters.csv")
+
+# Pair-level trajectory features for drug-organism combinations
+pair_features <- full_long_ml %>%
+  group_by(organism, drug, pair_id) %>%
+  summarise(
+    mean_susc = mean(susc_pct, na.rm = TRUE),
+    delta_susc = susc_pct[year == max(year)] - susc_pct[year == min(year)],
+    slope_w = {
+      fit <- tryCatch(
+        stats::lm(susc_pct ~ year, weights = tested),
+        error = function(e) NULL
+      )
+      if (is.null(fit)) NA_real_ else unname(stats::coef(fit)["year"])
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(across(where(is.numeric), ~ tidyr::replace_na(., 0)))
+
+pfm <- pair_features %>%
+  select(mean_susc, delta_susc, slope_w) %>%
+  scale()
+rownames(pfm) <- pair_features$pair_id
+
+d_pair <- dist(pfm, method = "euclidean")
+hc_pair <- hclust(d_pair, method = "average")
+pair_cut <- tibble(
+  pair_id = rownames(pfm),
+  pair_cluster = as.integer(cutree(hc_pair, k = 4L))
+)
+
+pair_clusters <- pair_features %>%
+  left_join(pair_cut, by = "pair_id")
+write_csv(pair_clusters, "output/ml/table_pair_clusters_trajectory.csv")
+
+# NMF on susceptibility matrix (non-negative): drugs x organisms, values in [0,1]
+V_raw <- full_long %>%
+  filter(year == 2024) %>%
+  select(drug, organism, susc_pct) %>%
+  mutate(susc_pct = pmax(0, susc_pct)) %>%
+  pivot_wider(names_from = organism, values_from = susc_pct) %>%
+  tibble::column_to_rownames("drug")
+V <- as.matrix(V_raw)
+V[is.na(V)] <- min(V, na.rm = TRUE) * 0.5
+V <- V / 100
+
+if (!requireNamespace("NMF", quietly = TRUE)) {
+  tryCatch({
+    if (!requireNamespace("BiocManager", quietly = TRUE))
+      install.packages("BiocManager", repos = "https://cloud.r-project.org", quiet = TRUE)
+    BiocManager::install("Biobase", ask = FALSE, update = FALSE)
+    install.packages("NMF", repos = "https://cloud.r-project.org", quiet = TRUE)
+  }, error = function(e) {
+    message("  NMF/Biobase install failed: ", conditionMessage(e))
+  })
+}
+nmf_ok <- requireNamespace("NMF", quietly = TRUE)
+if (nmf_ok) {
+  nmff <- tryCatch(
+    NMF::nmf(V, rank = 3, seed = 42, .options = list(maxIter = 500L, keep.all = FALSE)),
+    error = function(e) NULL
+  )
+  if (!is.null(nmff)) {
+    W <- NMF::basis(nmff)
+    H <- NMF::coef(nmff)
+    archetype_drug <- as_tibble(W, rownames = "drug") %>%
+      pivot_longer(-drug, names_to = "archetype", values_to = "loading")
+    archetype_org <- as_tibble(t(H), rownames = "organism") %>%
+      pivot_longer(-organism, names_to = "archetype", values_to = "score")
+    write_csv(archetype_drug, "output/ml/table_nmf_archetype_drug_loadings.csv")
+    write_csv(archetype_org, "output/ml/table_nmf_archetype_organism_scores.csv")
+    cat("  NMF archetypes (rank=3) saved.\n")
+  }
+} else {
+  cat("  NMF package not installed; skipped (install.packages('NMF')).\n")
+}
+
+cat("  Clustering tables and dendrogram written to output/ml/.\n")
+
+# MODULE 10: PELT changepoint sensitivity for carbapenem resistance
+cat("\n=== MODULE 10: PELT CHANGEPOINT SENSITIVITY ===\n")
+
+eskape_organisms <- c(
+  "K. pneumoniae", "A. baumannii",
+  "P. aeruginosa", "Enterobacter spp."
+)
+
+cpt_rows <- list()
+for (org in eskape_organisms) {
+  d <- amrsn %>% filter(organism == org) %>% arrange(year)
+  x_mer <- d$mer_res_pct / 100
+  x_imi <- d$imi_res_pct / 100
+  cp_mer <- tryCatch(
+    changepoint::cpt.meanvar(x_mer, method = "PELT"),
+    error = function(e) NULL
+  )
+  cp_imi <- tryCatch(
+    changepoint::cpt.meanvar(x_imi, method = "PELT"),
+    error = function(e) NULL
+  )
+  add_cp <- function(cp_obj, abx) {
+    if (is.null(cp_obj)) {
+      return(tibble(organism = org, antibiotic = abx, n_cpt = NA_integer_,
+                    cpt_years = NA_character_))
+    }
+    ix <- changepoint::cpts(cp_obj)
+    yrs <- if (length(ix)) d$year[ix] else NA_integer_
+    tibble(
+      organism = org,
+      antibiotic = abx,
+      n_cpt = length(ix),
+      cpt_years = paste(unique(yrs), collapse = ";")
+    )
+  }
+  cpt_rows[[length(cpt_rows) + 1]] <- add_cp(cp_mer, "Meropenem")
+  cpt_rows[[length(cpt_rows) + 1]] <- add_cp(cp_imi, "Imipenem")
+}
+
+cpt_tbl <- bind_rows(cpt_rows)
+write_csv(cpt_tbl, "output/ml/table_changepoint_pelt_carbapenem.csv")
+
+# Regime map: assign segment index by year for meropenem (PELT breakpoints)
+reg_list <- list()
+for (org in eskape_organisms) {
+  d <- amrsn %>% filter(organism == org) %>% arrange(year)
+  n <- nrow(d)
+  cp <- tryCatch(
+    changepoint::cpt.meanvar(d$mer_res_pct / 100, method = "PELT"),
+    error = function(e) NULL
+  )
+  if (is.null(cp)) {
+    seg <- rep(1L, n)
+  } else {
+    cp_i <- sort(unique(as.integer(changepoint::cpts(cp))))
+    br <- sort(unique(c(0L, cp_i, n)))
+    seg <- integer(n)
+    lab <- 1L
+    for (j in seq_len(length(br) - 1L)) {
+      lo <- br[j] + 1L
+      hi <- br[j + 1L]
+      seg[lo:hi] <- lab
+      lab <- lab + 1L
+    }
+  }
+  reg_list[[length(reg_list) + 1]] <- tibble(
+    organism = org,
+    year = d$year,
+    mer_res_pct = d$mer_res_pct,
+    segment = seg
+  )
+}
+regime_long <- bind_rows(reg_list)
+write_csv(regime_long, "output/ml/table_meropenem_regime_map_pelt.csv")
+
+fig_regime <- regime_long %>%
+  ggplot(aes(
+    x = year,
+    y = mer_res_pct,
+    colour = factor(segment),
+    group = interaction(organism, segment, drop = TRUE)
+  )) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  facet_wrap(~organism, scales = "fixed", ncol = 2) +
+  scale_x_continuous(breaks = 2017:2024) +
+  labs(
+    title = "Meropenem resistance with PELT mean-variance segments",
+    x = NULL, y = "Resistance (%)", colour = "Segment"
+  ) +
+  theme_ml
+
+ggsave("output/ml/fig_changepoint_meropenem_regimes.png", fig_regime, width = 10, height = 7, dpi = 300)
+ggsave("output/ml/fig_changepoint_meropenem_regimes_light.png",
+       fig_regime + theme_ml_light, width = 10, height = 7, dpi = 300)
+
+cat("  Wrote changepoint and regime-map outputs.\n")
+
+cat("\n  amrsn_ml_enhancements.R completed - see output/ml/\n")
