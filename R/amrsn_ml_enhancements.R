@@ -1,5 +1,5 @@
 # CARE-INDIA (Carbapenem resistance among Gram-negative ESKAPEE pathogens in India, 2017-2024)
-# R ML modules: auto.arima + linear-mixed-model forecast ensemble, clustering/NMF resistance archetypes, and PELT changepoints
+# R ML modules: clustering/NMF resistance archetypes and PELT changepoints
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
 # License: MIT (see LICENSE)
 
@@ -17,12 +17,10 @@ ensure_pkgs <- function(pkgs) {
   }
 }
 
-ensure_pkgs(c("forecast", "changepoint", "cluster", "lme4"))
+ensure_pkgs(c("changepoint", "cluster"))
 
-library(forecast)
 library(changepoint)
 library(cluster)
-library(lme4)
 
 root <- getwd()
 if (!file.exists(file.path(root, "R", "amrsn_data_shared.R"))) {
@@ -66,124 +64,8 @@ theme_ml_light <- theme_minimal(base_size = 11) +
     legend.background = element_rect(fill = "white", colour = NA)
   )
 
-cat("\n=== MODULE 8: RESISTANCE FORECASTING ===\n")
-
 full_long_ml <- full_long %>%
   mutate(pair_id = paste(organism, drug, sep = " | "))
-
-forecast_horizon <- 4L
-last_y <- max(full_long_ml$year, na.rm = TRUE)
-future_years <- (last_y + 1L):(last_y + forecast_horizon)
-
-arima_block <- full_long_ml %>%
-  group_by(organism, drug, pair_id) %>%
-  group_modify(function(.x, .y) {
-    yv <- .x$res_pct
-    w <- .x$tested
-    yrs <- .x$year
-    if (length(unique(yv)) == 1L || stats::sd(yv) < 1e-6) {
-      pred <- rep(yv[1], forecast_horizon)
-      return(tibble(
-        year = future_years,
-        pred_arima = pmax(0, pmin(100, pred)),
-        lo80 = pmax(0, pred - 3), hi80 = pmin(100, pred + 3),
-        lo95 = pmax(0, pred - 5), hi95 = pmin(100, pred + 5)
-      ))
-    }
-    ts_y <- stats::ts(yv, start = min(yrs), frequency = 1)
-    fit <- tryCatch(forecast::auto.arima(ts_y, stepwise = TRUE, approximation = TRUE),
-                    error = function(e) NULL)
-    if (is.null(fit)) {
-      m <- stats::lm(res_pct ~ year, data = .x, weights = w)
-      nd <- tibble(year = future_years)
-      pr <- predict(m, newdata = nd, interval = "prediction", level = 0.95)
-      pred <- pr[, "fit"]
-      lo95 <- pr[, "lwr"]
-      hi95 <- pr[, "upr"]
-      lo80 <- pred - 1.28 * (hi95 - pred) / 1.96
-      hi80 <- pred + 1.28 * (hi95 - pred) / 1.96
-    } else {
-      fc <- forecast::forecast(fit, h = forecast_horizon, level = c(80, 95))
-      pred <- as.numeric(fc$mean)
-      lo80 <- fc$lower[, 1]
-      hi80 <- fc$upper[, 1]
-      lo95 <- fc$lower[, 2]
-      hi95 <- fc$upper[, 2]
-    }
-    tibble(
-      year = future_years,
-      pred_arima = pmax(0, pmin(100, pred)),
-      lo80 = pmax(0, pmin(100, lo80)),
-      hi80 = pmax(0, pmin(100, hi80)),
-      lo95 = pmax(0, pmin(100, lo95)),
-      hi95 = pmax(0, pmin(100, hi95))
-    )
-  }) %>%
-  ungroup()
-
-fit_lmer <- tryCatch(
-  lme4::lmer(
-    res_pct ~ year + (year | pair_id),
-    data = full_long_ml,
-    weights = full_long_ml$tested,
-    control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
-  ),
-  error = function(e) NULL
-)
-
-pair_map <- full_long_ml %>% distinct(organism, drug, pair_id)
-newd <- tidyr::crossing(pair_map, year = future_years)
-
-if (!is.null(fit_lmer)) {
-  pred_lmer <- as.numeric(stats::predict(fit_lmer, newdata = newd, re.form = NULL))
-  pred_lmer <- pmax(0, pmin(100, pred_lmer))
-} else {
-  fg <- lm(res_pct ~ year + pair_id, data = full_long_ml, weights = tested)
-  pred_lmer <- pmax(0, pmin(100, as.numeric(stats::predict(fg, newdata = newd))))
-}
-
-forecast_tbl <- newd %>%
-  mutate(pred_lmer = pred_lmer) %>%
-  left_join(arima_block, by = c("organism", "drug", "pair_id", "year")) %>%
-  mutate(
-    pred_ensemble = (pred_arima + pred_lmer) / 2,
-    interval_mid_80 = (hi80 - lo80) / 2
-  )
-
-write_csv(forecast_tbl, "output/ml/table_forecast_resistance_2025_2028.csv")
-
-hist_fc <- full_long_ml %>%
-  select(organism, drug, year, res_pct) %>%
-  rename(observed = res_pct)
-
-fig_forecast <- forecast_tbl %>%
-  ggplot(aes(x = year)) +
-  geom_ribbon(aes(ymin = lo80, ymax = hi80), alpha = 0.25, fill = "#48C9B0") +
-  geom_line(aes(y = pred_ensemble, colour = drug), linewidth = 0.8) +
-  geom_point(aes(y = pred_ensemble, colour = drug), size = 1.5) +
-  geom_line(
-    data = hist_fc,
-    aes(x = year, y = observed, colour = drug),
-    linewidth = 0.5, linetype = "dotted", alpha = 0.7
-  ) +
-  facet_wrap(~organism, scales = "free_y", ncol = 2) +
-  scale_x_continuous(breaks = seq(2017, 2030, by = 1)) +
-  labs(
-    title = "Projected resistance (%) - ARIMA + hierarchical LM ensemble",
-    subtitle = "Shaded: 80% PI (ARIMA). Historic observations: dotted.",
-    x = NULL, y = "Resistance (%)", colour = "Drug"
-  ) +
-  theme_ml +
-  theme(legend.position = "none")
-
-ggsave("output/ml/fig_forecast_resistance_facets.png", fig_forecast, width = 12, height = 10, dpi = 300)
-ggsave("output/ml/fig_forecast_resistance_facets.pdf", fig_forecast, width = 12, height = 10)
-ggsave("output/ml/fig_forecast_resistance_facets_light.png",
-       fig_forecast + theme_ml_light, width = 12, height = 10, dpi = 300)
-ggsave("output/ml/fig_forecast_resistance_facets_light.pdf",
-       fig_forecast + theme_ml_light, width = 12, height = 10)
-
-cat("  Wrote output/ml/table_forecast_resistance_2025_2028.csv and fig_forecast_*.\n")
 
 cat("\n=== MODULE 9: CLUSTERING / ARCHETYPES ===\n")
 

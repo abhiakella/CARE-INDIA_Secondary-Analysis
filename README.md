@@ -12,8 +12,8 @@ Code only. Data are not redistributed: the analysis is a secondary analysis of t
 |---|---|
 | `R/amrsn_data_shared.R` | shared data loader (sourced by the R scripts) |
 | `R/amrsn_analysis.R` | trend tests, weighted-regression slopes, Davies breakpoint test, main trend figures |
-| `R/amrsn_ml_enhancements.R` | ARIMA + mixed-model forecast ensemble, clustering/NMF archetypes, PELT changepoints |
-| `R/forecast_calibration.R` | rolling-origin backtest and calibrated 2025-2028 projection (run after `amrsn_ml_enhancements.R`) |
+| `R/amrsn_ml_enhancements.R` | clustering/NMF archetypes, PELT changepoints |
+| `R/03_forecast_trend.R` | weighted logit-trend forecast 2025-2028 with prediction intervals, rolling-origin backtest, Figure 5, Table S8 |
 | `R/05_trajectory_clustering.R` | k-medoids trajectory clustering |
 | `R/genetic_features.R` | genetic-feature tables and genotype-therapy matrix |
 | `python/consolidated_ml.py` | empiric-failure classifier: holdout, rolling-origin and external validation |
