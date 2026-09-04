@@ -59,7 +59,7 @@ trend_results <- bind_rows(
     TRUE            ~ "ns"
   ))
 
-cat("\n═══ COCHRAN–ARMITAGE TREND TEST RESULTS ═══\n\n")
+cat("\n═══ COCHRAN-ARMITAGE TREND TEST RESULTS ═══\n\n")
 print(trend_results, n = Inf)
 
 summary_stats <- amrsn_ee %>%
@@ -165,8 +165,8 @@ fig1 <- amrsn_long %>%
   scale_x_continuous(breaks = 2017:2024) +
   scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
   labs(
-    title    = "Meropenem Resistance Trends — Gram-Negative ESKAPE",
-    subtitle = "ICMR-AMRSN, 2017–2024",
+    title    = "Meropenem Resistance Trends -  Gram-Negative ESKAPE",
+    subtitle = "ICMR-AMRSN, 2017-2024",
     x = "Year", y = "Resistance (%)",
     colour = "Organism", shape = "Organism"
   ) +
@@ -186,8 +186,8 @@ fig2 <- amrsn_long %>%
   scale_x_continuous(breaks = 2017:2024) +
   scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
   labs(
-    title    = "Imipenem Resistance Trends — Gram-Negative ESKAPE",
-    subtitle = "ICMR-AMRSN, 2017–2024",
+    title    = "Imipenem Resistance Trends -  Gram-Negative ESKAPE",
+    subtitle = "ICMR-AMRSN, 2017-2024",
     x = "Year", y = "Resistance (%)",
     colour = "Organism", shape = "Organism"
   ) +
@@ -208,7 +208,7 @@ fig3 <- amrsn_long %>%
   scale_y_continuous(limits = c(0, 100)) +
   labs(
     title    = "Carbapenem Resistance by Organism and Antibiotic",
-    subtitle = "ICMR-AMRSN, 2017–2024",
+    subtitle = "ICMR-AMRSN, 2017-2024",
     x = "Year", y = "Resistance (%)",
     colour = "Carbapenem", linetype = "Carbapenem"
   ) +
@@ -224,7 +224,7 @@ fig4 <- amrsn %>%
   scale_x_continuous(breaks = 2017:2024) +
   labs(
     title    = "Number of Isolates per Year by Organism",
-    subtitle = "ICMR-AMRSN, 2017–2024",
+    subtitle = "ICMR-AMRSN, 2017-2024",
     x = "Year", y = "Isolates (×1000)", fill = "Organism"
   ) +
   theme_pub

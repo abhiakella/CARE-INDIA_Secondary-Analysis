@@ -198,10 +198,10 @@ def main() -> None:
         if "external_roc_auc" in external_metrics:
             print(f"  External ROC-AUC: {external_metrics['external_roc_auc']:.3f}")
         else:
-            print("  Single class in external set — AUC not computed; "
+            print("  Single class in external set -  AUC not computed; "
                   "see table_external_validation_predictions.csv.")
     else:
-        print(f"External CSV not found at {args.external_csv} — skipping external validation.")
+        print(f"External CSV not found at {args.external_csv} -  skipping external validation.")
 
     metrics = {
         "holdout_roc_auc":              holdout_auc,

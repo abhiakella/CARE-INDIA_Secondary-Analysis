@@ -320,11 +320,11 @@ def main() -> None:
         for name, p in preds_holdout.items()
     ]
 
-    print("\n25% Holdout — model comparison")
+    print("\n25% Holdout -  model comparison")
     print(f"{'Model':>20}  {'AUC':>5}  {'95% CI':>15}  {'Brier':>6}  "
           f"{'CalSlope':>9}  {'CalInt':>7}  {'Acc':>5}")
     for r in holdout_rows:
-        ci  = f"[{r['auc_ci_lo']:.2f}, {r['auc_ci_hi']:.2f}]" if not np.isnan(r["auc_ci_lo"]) else "—"
+        ci  = f"[{r['auc_ci_lo']:.2f}, {r['auc_ci_hi']:.2f}]" if not np.isnan(r["auc_ci_lo"]) else " - "
         cal_s = f"{r['cal_slope']:.2f}" if not np.isnan(r['cal_slope']) else "N/A"
         cal_i = f"{r['cal_intercept']:.2f}" if not np.isnan(r['cal_intercept']) else "N/A"
         print(f"{r['model']:>20}  {r['auc']:>5.3f}  {ci:>15}  "
@@ -351,9 +351,9 @@ def main() -> None:
             for name, p in preds_external.items()
         ]
 
-        print("\nExternal (n={}) — model comparison".format(len(y_ext)))
+        print("\nExternal (n={}) -  model comparison".format(len(y_ext)))
         for r in external_rows:
-            ci = f"[{r['auc_ci_lo']:.2f}, {r['auc_ci_hi']:.2f}]" if not np.isnan(r["auc_ci_lo"]) else "—"
+            ci = f"[{r['auc_ci_lo']:.2f}, {r['auc_ci_hi']:.2f}]" if not np.isnan(r["auc_ci_lo"]) else " - "
             print(f"  {r['model']:>20}  AUC={r['auc']:.3f}  CI={ci}  "
                   f"Brier={r['brier']:.3f}  Acc={r['accuracy']:.3f}")
 
@@ -386,7 +386,7 @@ def main() -> None:
             print(f"  {r['model']:>10} - {r['baseline']:<20} {r['diff']:+.3f} "
                   f"[{r['ci_lo']:+.3f}, {r['ci_hi']:+.3f}]  p={r['p_two_sided']:.2f}")
     else:
-        print(f"\nExternal CSV not found at {args.external_csv} — skipped.")
+        print(f"\nExternal CSV not found at {args.external_csv} -  skipped.")
 
     summary = {
         "method":               "Seven-model comparator: naive_lag_rule, lag_as_score, cell_mean_lookup, no_lag_LR, "
@@ -419,10 +419,10 @@ def main() -> None:
         print(f"  No-lag LR AUC              : {nol['auc']:.3f}  "
               f"(margin RF − no-lag LR: {rf['auc'] - nol['auc']:+.3f})")
         if rf["auc"] - nl["auc"] < 0.02:
-            print("  RF margin over naive-lag rule < 0.02 — "
+            print("  RF margin over naive-lag rule < 0.02 -  "
                   "the model is essentially memorising last year's susceptibility.")
         if rf["auc"] - nol["auc"] > 0.10:
-            print("  RF beats no-lag LR by > 0.10 — lag feature is doing real work.")
+            print("  RF beats no-lag LR by > 0.10 -  lag feature is doing real work.")
 
     print("\nWrote:")
     for f in [
