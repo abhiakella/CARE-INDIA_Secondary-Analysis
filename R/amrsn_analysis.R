@@ -5,7 +5,6 @@
 
 set.seed(42)
 
-# Setup: portable root detection, output directory, and dataset loading
 suppressPackageStartupMessages({
   library(tidyverse)
   library(scales)
@@ -31,8 +30,6 @@ dir.create(file.path(root, "output"), showWarnings = FALSE, recursive = TRUE)
 
 source(file.path(root, "R", "amrsn_data_shared.R"))
 
-
-# 1. Cochran-Armitage trend tests (resistance proportion vs year)
 run_trend_test <- function(data, organism_name, abx, res_col, tested_col) {
   d <- data %>% filter(organism == organism_name)
   tt <- prop.trend.test(
@@ -49,7 +46,6 @@ run_trend_test <- function(data, organism_name, abx, res_col, tested_col) {
   )
 }
 
-# Full ESKAPEE panel (five organisms) for the trend tests, matching the manuscript
 organisms <- c("K. pneumoniae", "A. baumannii", "P. aeruginosa", "Enterobacter spp.", "E. coli")
 
 trend_results <- bind_rows(
@@ -66,8 +62,6 @@ trend_results <- bind_rows(
 cat("\n═══ COCHRAN–ARMITAGE TREND TEST RESULTS ═══\n\n")
 print(trend_results, n = Inf)
 
-
-# 2. Absolute and annualised resistance change, 2017 to 2024
 summary_stats <- amrsn_ee %>%
   group_by(organism) %>%
   summarise(
@@ -86,8 +80,6 @@ summary_stats <- amrsn_ee %>%
 cat("\n═══ SUMMARY: RESISTANCE CHANGE 2017→2024 ═══\n\n")
 print(summary_stats, width = Inf)
 
-
-# 3. Weighted linear regression: slope and 95% CI
 run_weighted_lm <- function(data, organism_name, abx, res_pct_col, tested_col) {
   d   <- data %>% filter(organism == organism_name)
   fit <- lm(as.formula(paste(res_pct_col, "~ year")), data = d, weights = d[[tested_col]])
@@ -111,12 +103,6 @@ lm_results <- bind_rows(
 cat("\n═══ WEIGHTED LINEAR REGRESSION: SLOPE (PPT/YEAR) ═══\n\n")
 print(lm_results, width = Inf)
 
-
-# 3b. Breakpoint sensitivity: segmented regression + Davies test
-#     Weighted lm per organism-carbapenem pair (weights = isolates tested), Davies
-#     test for the existence of a breakpoint, and a segmented fit anchored at psi=2020.5.
-#     With only eight annual points, segmented() often does not converge (reported as
-#     seg_converged = FALSE); the Davies p-value is the primary breakpoint statistic.
 if (!requireNamespace("segmented", quietly = TRUE)) {
   tryCatch(install.packages("segmented", repos = "https://cloud.r-project.org", quiet = TRUE),
            error = function(e) invisible(NULL))
@@ -153,8 +139,6 @@ cat("\n═══ DAVIES BREAKPOINT TEST (segmented regression) ═══\n\n")
 print(davies_results, n = Inf)
 write_csv(davies_results, file.path(root, "output", "table_davies_segmented_breakpoint.csv"))
 
-
-# 4. Figures
 theme_pub <- theme_minimal(base_size = 12) +
   theme(
     panel.grid.minor = element_blank(),
@@ -248,8 +232,6 @@ fig4 <- amrsn %>%
 ggsave(file.path(root, "output", "fig4_isolate_counts.png"), fig4,
        width = 10, height = 6, dpi = 300)
 
-
-# 5. Exports
 annualised_summary <- amrsn_ee %>%
   group_by(organism) %>%
   summarise(
@@ -264,8 +246,6 @@ write_csv(annualised_summary, file.path(root, "output", "table_annualised_pp_cha
 write_csv(trend_results,       file.path(root, "output", "table_cochran_armitage_results.csv"))
 write_csv(lm_results,          file.path(root, "output", "table_weighted_lm_slopes.csv"))
 
-
-# 6. Session info (reproducibility)
 writeLines(capture.output(sessionInfo()),
            file.path(root, "output", "sessionInfo_amrsn_analysis.txt"))
 

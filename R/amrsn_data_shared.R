@@ -9,7 +9,6 @@ years <- 2017:2024
 
 dd <- Sys.getenv("AMRSN_DATA_DIR", "data")
 
-# Full long-format antibiogram: all organisms, all drugs
 full_long <- read.csv(file.path(dd, "data_full_long.csv"), stringsAsFactors = FALSE) %>%
   as_tibble()
 if (!"resistant" %in% names(full_long)) {
@@ -20,7 +19,6 @@ if (!"res_pct" %in% names(full_long)) {
 }
 full_long <- full_long %>% arrange(organism, drug, year)
 
-# Totals per organism-year
 totals_path <- file.path(dd, "organism_totals.csv")
 if (file.exists(totals_path)) {
   totals <- read.csv(totals_path, stringsAsFactors = FALSE) %>%
@@ -34,7 +32,6 @@ if (file.exists(totals_path)) {
     arrange(organism, year)
 }
 
-# Carbapenem-only wide format
 build_carb_wide <- function(drug_data, total_data) {
   org <- unique(drug_data$organism)
   imi <- drug_data %>% filter(drug == "Imipenem")
@@ -58,7 +55,6 @@ build_carb_wide <- function(drug_data, total_data) {
     )
 }
 
-# ESKAPE 4 organisms (carbapenem wide)
 amrsn <- bind_rows(
   build_carb_wide(full_long %>% filter(organism == "K. pneumoniae"),
                   totals %>% filter(organism == "K. pneumoniae")),
@@ -70,14 +66,12 @@ amrsn <- bind_rows(
                   totals %>% filter(organism == "Enterobacter spp."))
 )
 
-# ESKAPEE: add E. coli
 amrsn_ee <- bind_rows(
   amrsn,
   build_carb_wide(full_long %>% filter(organism == "E. coli"),
                   totals %>% filter(organism == "E. coli"))
 )
 
-# Long format for carbapenem plotting (ESKAPE)
 amrsn_long <- amrsn %>%
   pivot_longer(
     cols = c(imi_res_pct, mer_res_pct),
@@ -87,7 +81,6 @@ amrsn_long <- amrsn %>%
     "imi_res_pct" = "Imipenem", "mer_res_pct" = "Meropenem"
   ))
 
-# Long format for carbapenem plotting (ESKAPEE = includes E. coli)
 amrsn_ee_long <- amrsn_ee %>%
   pivot_longer(
     cols = c(imi_res_pct, mer_res_pct),

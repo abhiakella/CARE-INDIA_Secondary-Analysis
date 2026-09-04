@@ -36,7 +36,6 @@ near <- function(a, b, tol) is.finite(a) && abs(a - b) <= tol
 fl <- full_long %>% mutate(pair_id = paste(organism, drug, sep = " | "))
 future_years <- 2025L:2028L
 
-# ── shared ARIMA-per-pair helper (returns pred + predictive SD) ───────────────
 arima_pair <- function(yv, w, yrs, fut) {
   h <- length(fut)
   if (length(unique(yv)) == 1L || stats::sd(yv) < 1e-6)
@@ -53,9 +52,7 @@ arima_pair <- function(yv, w, yrs, fut) {
          se_arima  = (as.numeric(fc$upper[, 1]) - as.numeric(fc$lower[, 1])) / (2 * Z95))
 }
 
-################################################################################
 cat("\n=========================== SECTION 1: FIXED-PI FORECAST ===========================\n")
-################################################################################
 ab_full <- fl %>% group_by(organism, drug, pair_id) %>%
   group_modify(function(.x, .y) { .x <- arrange(.x, year)
     out <- arima_pair(.x$res_pct, .x$tested, .x$year, future_years); out$year <- future_years; out }) %>% ungroup()
@@ -74,7 +71,6 @@ forecast_tbl <- nd %>% left_join(ab_full, by = c("organism", "drug", "pair_id", 
 write_csv(forecast_tbl %>% select(organism, drug, pair_id, year, pred_lmer, pred_arima,
                                   lo80, hi80, lo95, hi95, pred_ensemble, sd_ens, se_arima),
           file.path(OUT, "table_forecast_resistance_2025_2028_fixedPI.csv"))
-# verify: points reproduce the canonical forecast, and all points inside their PI
 if (file.exists(ORIG_FC)) {
   orig <- read_csv(ORIG_FC, show_col_types = FALSE) %>% select(organism, drug, year, pe_old = pred_ensemble)
   cmp  <- forecast_tbl %>% left_join(orig, by = c("organism", "drug", "year"))
@@ -84,9 +80,7 @@ if (file.exists(ORIG_FC)) {
 chk("all ensemble points inside their fixed 95% PI",
     all(forecast_tbl$pred_ensemble >= forecast_tbl$lo95 - 1e-9 & forecast_tbl$pred_ensemble <= forecast_tbl$hi95 + 1e-9))
 
-################################################################################
 cat("\n=========================== SECTION 2: ROLLING-ORIGIN BACKTEST ===========================\n")
-################################################################################
 origins <- c(2021L, 2022L, 2023L); rows <- list()
 for (O in origins) {
   tr  <- fl %>% filter(year <= O); fut <- (O + 1L):2024L
@@ -131,7 +125,6 @@ chk("backtest ALL biased low (~-1.87) & PIs overconfident", near(bA$bias, -1.87,
 chk("backtest carbapenem linear beats ensemble", bC$lin_MAE < bC$ens_MAE,
     sprintf("lin=%.2f ens=%.2f", bC$lin_MAE, bC$ens_MAE))
 
-# ── shared LOO evaluator (scale = "raw" or "logit") ───────────────────────────
 loo_eval <- function(scale) {
   res <- list()
   for (Ostar in origins) {
@@ -163,7 +156,6 @@ loo_tab <- function(ev, scale) {
   bind_rows(f(ev, "ALL pairs"), f(ev %>% filter(stratum == "carbapenem"), "Carbapenems"))
 }
 
-# ── shared final-forecast calibrator ──────────────────────────────────────────
 calibrate_forecast <- function(scale) {
   key <- if (scale == "logit") "e_logit" else "error_pp"
   cal_sh <- bt %>% group_by(stratum, horizon) %>%
@@ -200,9 +192,7 @@ calibrate_forecast <- function(scale) {
                  point_cal, lo80_cal = lo80_c, hi80_cal = hi80_c, lo95_cal = lo95_c, hi95_cal = hi95_c, floor_binds)
 }
 
-################################################################################
 cat("\n=========================== SECTION 3: TIER 1 (RAW SCALE) ===========================\n")
-################################################################################
 ev_raw <- loo_eval("raw"); loo_raw <- loo_tab(ev_raw, "raw")
 print(as.data.frame(loo_raw), row.names = FALSE)
 fc_raw <- calibrate_forecast("raw")
@@ -213,9 +203,7 @@ rA <- loo_raw %>% filter(set == "ALL pairs"); rC <- loo_raw %>% filter(set == "C
 chk("Tier1 raw LOO cov95 restored (~0.95)", near(rA$new_cov95, 0.95, 0.06), sprintf("cov95=%.2f (was %.2f)", rA$new_cov95, rA$old_cov95))
 chk("Tier1 raw carbapenem MAE improved (<4.28 linear)", rC$new_MAE < 4.28, sprintf("new=%.2f", rC$new_MAE))
 
-################################################################################
 cat("\n=========================== SECTION 4: TIER 1 (LOGIT SCALE) ===========================\n")
-################################################################################
 ev_lgt <- loo_eval("logit"); loo_lgt <- loo_tab(ev_lgt, "logit")
 print(as.data.frame(loo_lgt), row.names = FALSE)
 fc_lgt <- calibrate_forecast("logit")
@@ -227,7 +215,6 @@ chk("Tier1 logit LOO coverage near nominal (80/95)", near(lA$new_cov80, 0.80, 0.
 chk("Tier1 logit carbapenem MAE improved (<3.60 raw)", lC$new_MAE < 3.60, sprintf("new=%.2f", lC$new_MAE))
 chk("Tier1 logit FIXES A.baumannii saturation (max point <100)", ab_max < 99.9, sprintf("A.b max point=%.1f%%", ab_max))
 
-# ── calibrated forecast figure (logit; the carry-forward version) ─────────────
 poster_bg<-"#3C3C3C"; poster_text<-"#E8E8E8"; poster_grid<-"#525252"
 theme_ml <- theme_minimal(base_size = 11) + theme(
   plot.background=element_rect(fill=poster_bg,colour=NA), panel.background=element_rect(fill=poster_bg,colour=NA),
@@ -245,9 +232,7 @@ figt <- fc_lgt %>% ggplot(aes(x = year)) +
        x = NULL, y = "Resistance (%)") + theme_ml
 ggsave(file.path(OUT, "fig_forecast_tier1logit_facets.png"), figt, width = 12, height = 10, dpi = 300)
 
-################################################################################
 cat("\n=========================== SECTION 5: CONSOLIDATED METRICS + SUMMARY ===========================\n")
-################################################################################
 metrics <- bind_rows(loo_raw, loo_lgt) %>% mutate(across(where(is.numeric), ~round(., 3)))
 write_csv(metrics, file.path(OUT, "tier_metrics_summary.csv"))
 checks_df <- bind_rows(CHECKS); write_csv(checks_df, file.path(OUT, "verification_checks.csv"))

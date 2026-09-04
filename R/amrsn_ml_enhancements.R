@@ -66,7 +66,6 @@ theme_ml_light <- theme_minimal(base_size = 11) +
     legend.background = element_rect(fill = "white", colour = NA)
   )
 
-# MODULE 8: Resistance forecasting (auto.arima + hierarchical LMM ensemble)
 cat("\n=== MODULE 8: RESISTANCE FORECASTING ===\n")
 
 full_long_ml <- full_long %>%
@@ -122,7 +121,6 @@ arima_block <- full_long_ml %>%
   }) %>%
   ungroup()
 
-# Hierarchical pooling: random intercept and slope per organism-drug pair
 fit_lmer <- tryCatch(
   lme4::lmer(
     res_pct ~ year + (year | pair_id),
@@ -187,10 +185,8 @@ ggsave("output/ml/fig_forecast_resistance_facets_light.pdf",
 
 cat("  Wrote output/ml/table_forecast_resistance_2025_2028.csv and fig_forecast_*.\n")
 
-# MODULE 9: Clustering (hierarchical, k-medoids) + NMF archetypes
 cat("\n=== MODULE 9: CLUSTERING / ARCHETYPES ===\n")
 
-# 2024 susceptibility matrix: cluster organisms by drug profile (wide)
 abg_wide_2024 <- full_long %>%
   filter(year == 2024) %>%
   select(organism, drug, susc_pct) %>%
@@ -216,7 +212,6 @@ plot(hc_org, main = "Hierarchical clustering - organism antibiogram profiles (20
      xlab = "", sub = "")
 dev.off()
 
-# k-medoids on scaled features (organisms)
 set.seed(42)
 pam_k <- cluster::pam(scale(as.matrix(org_prof_imp)), k = 3)
 org_clusters <- tibble(
@@ -225,7 +220,6 @@ org_clusters <- tibble(
 )
 write_csv(org_clusters, "output/ml/table_pam_organism_clusters.csv")
 
-# Pair-level trajectory features for drug-organism combinations
 pair_features <- full_long_ml %>%
   group_by(organism, drug, pair_id) %>%
   summarise(
@@ -258,7 +252,6 @@ pair_clusters <- pair_features %>%
   left_join(pair_cut, by = "pair_id")
 write_csv(pair_clusters, "output/ml/table_pair_clusters_trajectory.csv")
 
-# NMF on susceptibility matrix (non-negative): drugs x organisms, values in [0,1]
 V_raw <- full_long %>%
   filter(year == 2024) %>%
   select(drug, organism, susc_pct) %>%
@@ -302,7 +295,6 @@ if (nmf_ok) {
 
 cat("  Clustering tables and dendrogram written to output/ml/.\n")
 
-# MODULE 10: PELT changepoint sensitivity for carbapenem resistance
 cat("\n=== MODULE 10: PELT CHANGEPOINT SENSITIVITY ===\n")
 
 eskape_organisms <- c(
@@ -344,7 +336,6 @@ for (org in eskape_organisms) {
 cpt_tbl <- bind_rows(cpt_rows)
 write_csv(cpt_tbl, "output/ml/table_changepoint_pelt_carbapenem.csv")
 
-# Regime map: assign segment index by year for meropenem (PELT breakpoints)
 reg_list <- list()
 for (org in eskape_organisms) {
   d <- amrsn %>% filter(organism == org) %>% arrange(year)

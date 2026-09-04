@@ -10,7 +10,6 @@ drug_ord <- c("Piperacillin-tazobactam","Cefotaxime","Ceftazidime","Cefepime","E
               "Meropenem","Amikacin","Gentamicin","Tobramycin","Ciprofloxacin","Levofloxacin","Colistin","Minocycline")
 org_ord <- c("E. coli","K. pneumoniae","A. baumannii","P. aeruginosa","Enterobacter spp.")
 
-## FIG 2: 2024 antibiogram heatmap
 d24 <- dl %>% filter(year==2024) %>% mutate(drug=factor(drug,levels=rev(drug_ord)),organism=factor(organism,levels=org_ord))
 f2 <- ggplot(d24,aes(organism,drug,fill=susc_pct))+geom_tile(colour="white",linewidth=.4)+
   geom_text(aes(label=round(susc_pct)),size=3)+
@@ -19,7 +18,6 @@ f2 <- ggplot(d24,aes(organism,drug,fill=susc_pct))+geom_tile(colour="white",line
   theme(axis.text.x=element_text(angle=20,hjust=1))
 ggsave("output/fig2_antibiogram_heatmap.png",f2,width=7.5,height=6,dpi=300)
 
-## FIG 3: therapeutic tier map (2024)
 tier <- d24 %>% mutate(tier=cut(susc_pct,c(-1,10,30,60,101),labels=c("Inactive","Not recommended","Targeted","Viable")))
 f3 <- ggplot(tier,aes(organism,drug,fill=tier))+geom_tile(colour="white",linewidth=.4)+
   scale_fill_manual(values=c("Inactive"="#B2182B","Not recommended"="#EF8A62","Targeted"="#FEE08B","Viable"="#1A9850"),name="Tier",drop=FALSE)+
@@ -27,7 +25,6 @@ f3 <- ggplot(tier,aes(organism,drug,fill=tier))+geom_tile(colour="white",linewid
   theme(axis.text.x=element_text(angle=20,hjust=1))
 ggsave("output/fig3_tier_map.png",f3,width=7.5,height=6,dpi=300)
 
-## FIG 4: India carbapenemase gene prevalence (latest reported year)
 gt <- read_csv("data/gene_trends.csv",show_col_types=FALSE)
 carb <- c("NDM","OXA-48","KPC","VIM","IMP")
 gl <- gt %>% filter(gene %in% carb) %>% group_by(organism) %>% filter(year==max(year)) %>% ungroup() %>%

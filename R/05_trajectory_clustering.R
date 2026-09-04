@@ -13,7 +13,6 @@ root <- getwd()
 dir.create("output", recursive = TRUE, showWarnings = FALSE)
 csv_in <- "data/AMRSN_GN_ESKAPEE_Susceptibility_Trends.csv"
 
-# Load all-specimen susceptibility trends; keep organism x drug pairs with adequate coverage
 amrsn <- read_csv(csv_in, show_col_types = FALSE) |>
   filter(grepl("^All", Specimen_Type)) |>
   filter(!is.na(Tested_N), !is.na(Susceptible_N), Tested_N >= 30) |>
@@ -31,7 +30,6 @@ pair_counts <- amrsn |>
   filter(n_years >= 5)
 amrsn <- amrsn |> semi_join(pair_counts, by = c("organism", "antibiotic"))
 
-# Weighted-LM resistance slope (pp/yr) per organism x drug
 slope_tbl <- amrsn |>
   group_by(organism, antibiotic) |>
   arrange(year, .by_group = TRUE) |>
@@ -45,7 +43,6 @@ slope_tbl <- amrsn |>
   )
 write_csv(slope_tbl, "output/table_organism_drug_slopes.csv")
 
-# Organism x drug slope matrix; keep drugs with full coverage
 slope_mat <- slope_tbl |>
   select(organism, antibiotic, slope_ppt_per_yr) |>
   pivot_wider(names_from = antibiotic, values_from = slope_ppt_per_yr) |>
@@ -57,7 +54,6 @@ slope_mat_complete <- slope_mat[, drugs_complete, drop = FALSE]
 cat(sprintf("Trajectory matrix: %d organisms x %d drugs.\n",
             nrow(slope_mat_complete), ncol(slope_mat_complete)))
 
-# PAM: choose k by average silhouette width over k = 2..(n-1)
 n_org   <- nrow(slope_mat_complete)
 k_range <- 2:max(2, n_org - 1)
 sil_widths <- sapply(k_range, function(k) pam(slope_mat_complete, k = k, diss = FALSE)$silinfo$avg.width)
@@ -74,7 +70,6 @@ cluster_tbl <- tibble(
 write_csv(cluster_tbl, "output/table_pam_trajectory_clusters.csv")
 cat("\nCluster assignments:\n"); print(cluster_tbl)
 
-# Slope heatmap ordered by cluster
 heat_long <- slope_tbl |>
   filter(antibiotic %in% drugs_complete) |>
   left_join(cluster_tbl |> select(organism, pam_cluster), by = "organism") |>

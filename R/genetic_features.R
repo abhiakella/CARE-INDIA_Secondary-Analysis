@@ -17,7 +17,6 @@ if (!file.exists(xl_path)) {
   warning(sprintf("Genetic features file %s not found. Skipping genetic modules.", xl_path))
 } else {
 
-  # Read genetic feature sheets and normalize column names
   global_features <- read_excel(xl_path, sheet = "Global Genetic Features")
   india_features  <- read_excel(xl_path, sheet = "India Genetic Features")
   global_vs_india <- read_excel(xl_path, sheet = "Global vs India Comparison")
@@ -34,7 +33,6 @@ if (!file.exists(xl_path)) {
   india_features  <- clean_names(india_features)
   global_vs_india <- clean_names(global_vs_india)
 
-  # Genotype-informed therapeutic decision matrix (India-focused)
   therapy_matrix <- tibble::tribble(
     ~organism, ~dominant_mechanism, ~phenotype_driver, ~first_line_therapy, ~salvage_therapy, ~india_context_alert,
     "K. pneumoniae", "blaNDM-1 / blaNDM-5", "MBL (Zinc-dependent)", "Aztreonam + Ceftazidime-Avibactam", "Colistin + Fosfomycin / Cefiderocol", "Ceftazidime-Avibactam alone is INEFFECTIVE in India due to NDM dominance.",
@@ -49,7 +47,6 @@ if (!file.exists(xl_path)) {
     "E. coli", "blaNDM-5 (ST167/ST410)", "MBL", "Aztreonam + Ceftazidime-Avibactam", "Colistin based combos", "Rapidly rising. Always test for susceptibility to novel combinations."
   )
 
-  # Organism-specific molecular profiles (India)
   molecular_profile_india <- india_features %>%
     group_by(pathogen) %>%
     summarise(
@@ -58,7 +55,6 @@ if (!file.exists(xl_path)) {
       key_sts = paste(unique(na.omit(dominant_indian_sts)), collapse = " | ")
     )
 
-  # Save output tables
   dir.create("output/genetic", showWarnings = FALSE)
   write.csv(global_features, "output/genetic/table_genetic_features_global.csv", row.names = FALSE)
   write.csv(india_features, "output/genetic/table_genetic_features_india.csv", row.names = FALSE)
