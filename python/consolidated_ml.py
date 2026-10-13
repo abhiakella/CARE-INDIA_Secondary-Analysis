@@ -2,7 +2,6 @@
 # Supervised high-risk classifier (logistic regression + random forest): 75/25 holdout, external, and rolling-origin validation
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
 # License: MIT (see LICENSE)
-
 from __future__ import annotations
 
 import argparse
@@ -16,7 +15,7 @@ import pandas as pd
 try:
     import matplotlib.pyplot as plt
     from sklearn.compose import ColumnTransformer
-    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import brier_score_loss, roc_auc_score
     from sklearn.model_selection import train_test_split
@@ -115,6 +114,9 @@ def make_pipe(model: str, features: list[str]) -> Pipeline:
             n_estimators=300, max_depth=8, min_samples_leaf=2,
             class_weight="balanced", random_state=RANDOM_STATE, n_jobs=-1,
         )
+    elif model == "hgb":
+        clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_depth=4, class_weight="balanced",
+                                             random_state=RANDOM_STATE)
     else:
         raise ValueError(f"unknown model {model}")
     return Pipeline([("prep", prep), ("clf", clf)])
@@ -123,6 +125,7 @@ MODELS = [
     ("no_lag_LR",  "lr", NO_LAG_FEATURES, "PRIMARY"),
     ("full_LR",    "lr", FULL_FEATURES,   "Sensitivity (best-calibrated)"),
     ("full_RF",    "rf", FULL_FEATURES,   "Sensitivity (legacy production model)"),
+    ("full_HGB",   "hgb", FULL_FEATURES,  "Sensitivity (gradient boosting)"),
 ]
 
 def bootstrap_auc_ci(y_true: np.ndarray, y_proba: np.ndarray,
@@ -270,6 +273,7 @@ def run_rolling_origin(df_raw: pd.DataFrame) -> list[dict]:
     return rows
 
 def main() -> None:
+    global HIGH_RISK_CUTOFF
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", type=Path,
                         default=Path("data/data_full_long.csv"))
@@ -280,7 +284,10 @@ def main() -> None:
     parser.add_argument("--label", type=str, default="CARE-INDIA carbapenem-resistance classifier")
     parser.add_argument("--prefix", type=str, default="headline",
                         help="Filename prefix for outputs (e.g. 'headline' or 'pathb').")
+    parser.add_argument("--cutoff", type=float, default=HIGH_RISK_CUTOFF,
+                        help="Susceptibility cut-off (%) defining the empiric-failure label (default 60; 80 as sensitivity).")
     args = parser.parse_args()
+    HIGH_RISK_CUTOFF = args.cutoff
     args.out.mkdir(parents=True, exist_ok=True)
     px = args.prefix
 

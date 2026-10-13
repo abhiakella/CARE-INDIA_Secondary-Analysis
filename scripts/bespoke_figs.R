@@ -18,9 +18,9 @@ f2 <- ggplot(d24,aes(organism,drug,fill=susc_pct))+geom_tile(colour="white",line
   theme(axis.text.x=element_text(angle=20,hjust=1))
 ggsave("output/fig2_antibiogram_heatmap.png",f2,width=7.5,height=6,dpi=300)
 
-tier <- d24 %>% mutate(tier=cut(susc_pct,c(-1,10,30,60,101),labels=c("Inactive","Not recommended","Targeted","Viable")))
+tier <- d24 %>% mutate(tier=cut(susc_pct,c(-1,10,60,80,101),labels=c("Inactive","Not recommended","Conditional","Preferred")))
 f3 <- ggplot(tier,aes(organism,drug,fill=tier))+geom_tile(colour="white",linewidth=.4)+
-  scale_fill_manual(values=c("Inactive"="#B2182B","Not recommended"="#EF8A62","Targeted"="#FEE08B","Viable"="#1A9850"),name="Tier",drop=FALSE)+
+  scale_fill_manual(values=c("Inactive"="#B2182B","Not recommended"="#EF8A62","Conditional"="#FEE08B","Preferred"="#1A9850"),name="Tier",drop=FALSE)+
   labs(title="Therapeutic tier classification, 2024",x=NULL,y=NULL)+th+
   theme(axis.text.x=element_text(angle=20,hjust=1))
 ggsave("output/fig3_tier_map.png",f3,width=7.5,height=6,dpi=300)

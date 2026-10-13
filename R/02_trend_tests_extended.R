@@ -28,6 +28,13 @@ lm_pairs <- fl %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   arrange(p_weighted)
 write_csv(lm_pairs, file.path(OUT, "table_trend_weighted_lm_all_pairs.csv"))
 
+carb10 <- lm_pairs %>% filter(drug %in% CARB) %>%
+  mutate(p_holm_carb10 = stats::p.adjust(p_weighted, "holm"), p_bh_carb10 = stats::p.adjust(p_weighted, "BH"),
+         p_holm_47 = p_weighted_holm, p_bh_47 = p_weighted_bh) %>%
+  select(organism, drug, n_years, n_isolates, slope_weighted, ci_lo_weighted, ci_hi_weighted, r2_weighted,
+         p_weighted, p_holm_carb10, p_bh_carb10, p_holm_47, p_bh_47) %>% arrange(p_weighted)
+write_csv(carb10, file.path(OUT, "table_trend_carbapenem_family10.csv"))
+
 ca_pairs <- fl %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   tt <- stats::prop.trend.test(x = d$susceptible, n = d$tested, score = d$year)
   tibble(n_years = nrow(d), chi_sq = unname(tt$statistic), p_value = tt$p.value)
@@ -71,4 +78,4 @@ cat("\nInteraction model (period split at 2020):\n")
 print(as.data.frame(inter %>% mutate(across(where(is.numeric), ~ round(., 3)))), row.names = FALSE)
 cat("\nGrid search, K. pneumoniae meropenem, all candidate knots:\n")
 print(as.data.frame(grid %>% filter(organism == "K. pneumoniae", drug == "Meropenem") %>% mutate(across(where(is.numeric), ~ round(., 3)))), row.names = FALSE)
-cat("\nWrote output/trends/: table_trend_weighted_lm_all_pairs.csv, table_trend_cochran_armitage_all_pairs.csv, table_covid_interaction_carbapenems.csv, table_piecewise_grid_all_knots.csv, table_piecewise_grid_best_knot.csv\n")
+cat("\nWrote output/trends/: table_trend_weighted_lm_all_pairs.csv, table_trend_cochran_armitage_all_pairs.csv, table_trend_carbapenem_family10.csv, table_covid_interaction_carbapenems.csv, table_piecewise_grid_all_knots.csv, table_piecewise_grid_best_knot.csv\n")

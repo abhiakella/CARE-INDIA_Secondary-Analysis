@@ -12,12 +12,15 @@ Code only. Data are not redistributed: the analysis is a secondary analysis of t
 |---|---|
 | `R/amrsn_data_shared.R` | shared data loader (sourced by the R scripts) |
 | `R/amrsn_analysis.R` | trend tests, weighted-regression slopes, Davies breakpoint test, main trend figures |
-| `R/02_trend_tests_extended.R` | 47-pair weighted regression and Cochran-Armitage with Holm/BH correction, unweighted sensitivity, interaction model, piecewise grid search |
+| `R/02_trend_tests_extended.R` | weighted regression and Cochran-Armitage with Holm/BH correction over the ten carbapenem pairs (primary) and all 47 pairs (sensitivity), unweighted sensitivity, interaction model, piecewise grid search |
 | `R/amrsn_ml_enhancements.R` | clustering/NMF archetypes, PELT changepoints |
 | `R/03_forecast_trend.R` | weighted logit-trend forecast 2025-2028 with prediction intervals, rolling-origin backtest, Figure 5, Table S8 |
+| `R/04_forecast_scenarios.R` | 2028 projections under alternative fitting windows and a piecewise trend |
 | `R/05_trajectory_clustering.R` | k-medoids trajectory clustering |
 | `R/genetic_features.R` | genetic-feature tables and genotype-therapy matrix |
-| `python/consolidated_ml.py` | empiric-failure classifier: holdout, rolling-origin and external validation |
+| `R/06_revision_figures.R` | journal-style main figures (TIFF), tier table at 80/60/10 |
+| `R/07_network_sensitivity.R` | carbapenem slopes restricted to stable-network years and adjusted for network size |
+| `python/consolidated_ml.py` | empiric-failure classifier: holdout, rolling-origin and external validation (`--cutoff`; gradient boosting included) |
 | `python/02_classifier_baselines_calibration.py` | baseline comparators, calibration, paired bootstrap |
 | `python/03_classifier_cv.py` | 5-fold cross-validation |
 | `python/empiric_classifier_shap.py` | random-forest classifier with permutation importance and SHAP |

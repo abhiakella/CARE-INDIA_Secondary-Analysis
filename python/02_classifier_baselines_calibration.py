@@ -2,7 +2,6 @@
 # CARE-INDIA (Carbapenem resistance among Gram-negative ESKAPEE pathogens in India, 2017-2024)
 # Classifier baseline comparators with calibration and bootstrap-CI diagnostics.
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
-
 from __future__ import annotations
 
 import argparse
@@ -186,6 +185,7 @@ def predictions_for_all_models(
     train_feat: pd.DataFrame, eval_feat: pd.DataFrame,
     y_train: pd.Series, y_eval: pd.Series,
 ) -> dict:
+    pass
     out = {}
 
     naive_class = (eval_feat["lag_susc_pct"] < HIGH_RISK_CUTOFF).astype(int).values
@@ -290,6 +290,7 @@ def plot_auc_forest(rows: list[dict], title: str, out_path: Path) -> None:
     plt.close()
 
 def main() -> None:
+    global HIGH_RISK_CUTOFF
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", type=Path,
                         default=aas_root() / "data" / "data_full_long.csv")
@@ -297,7 +298,9 @@ def main() -> None:
                         default=aas_root() / "data" / "atlas_external_india.csv")
     parser.add_argument("--out", type=Path,
                         default=aas_root() / "output")
+    parser.add_argument("--cutoff", type=float, default=HIGH_RISK_CUTOFF)
     args = parser.parse_args()
+    HIGH_RISK_CUTOFF = args.cutoff
     args.out.mkdir(parents=True, exist_ok=True)
 
     df_raw = add_series_lag(load_required(args.csv, "AMRSN"))

@@ -2,7 +2,6 @@
 # 5-fold stratified cross-validation of the empiric-failure classifiers (random forest; full and no-lag logistic regression).
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
 # License: MIT (see LICENSE)
-
 from __future__ import annotations
 
 import argparse
@@ -15,7 +14,7 @@ import pandas as pd
 
 try:
     from sklearn.compose import ColumnTransformer
-    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import brier_score_loss, roc_auc_score
     from sklearn.model_selection import StratifiedKFold
@@ -39,7 +38,7 @@ GENETIC_MAP = {
 NO_LAG_FEATURES = ["organism", "drug", "year", "log_tested"]
 FULL_FEATURES   = ["organism", "drug", "year", "log_tested", "lag_susc_pct",
                    "india_cre_rate", "has_ndm", "is_oxa23_driven"]
-MODELS = [("no_lag_LR", "lr", NO_LAG_FEATURES), ("full_LR", "lr", FULL_FEATURES), ("full_RF", "rf", FULL_FEATURES)]
+MODELS = [("no_lag_LR", "lr", NO_LAG_FEATURES), ("full_LR", "lr", FULL_FEATURES), ("full_RF", "rf", FULL_FEATURES), ("full_HGB", "hgb", FULL_FEATURES)]
 
 def load_required(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
@@ -66,16 +65,23 @@ def make_pipe(kind: str, features: list[str]) -> Pipeline:
     bin_ = [c for c in ["has_ndm", "is_oxa23_driven"] if c in features]
     prep = ColumnTransformer([("cat", OneHotEncoder(handle_unknown="ignore"), cat),
                               ("num", StandardScaler(), num), ("bin", "passthrough", bin_)])
-    clf = (LogisticRegression(max_iter=1000, class_weight="balanced", random_state=RANDOM_STATE) if kind == "lr"
-           else RandomForestClassifier(n_estimators=300, max_depth=8, min_samples_leaf=2, class_weight="balanced",
-                                       random_state=RANDOM_STATE, n_jobs=-1))
+    if kind == "lr":
+        clf = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=RANDOM_STATE)
+    elif kind == "hgb":
+        clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_depth=4, class_weight="balanced", random_state=RANDOM_STATE)
+    else:
+        clf = RandomForestClassifier(n_estimators=300, max_depth=8, min_samples_leaf=2, class_weight="balanced",
+                                     random_state=RANDOM_STATE, n_jobs=-1)
     return Pipeline([("prep", prep), ("clf", clf)])
 
 def main() -> None:
+    global HIGH_RISK_CUTOFF
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", type=Path, default=Path("data/data_full_long.csv"))
     ap.add_argument("--out", type=Path, default=Path("output/ml_cv"))
+    ap.add_argument("--cutoff", type=float, default=HIGH_RISK_CUTOFF)
     args = ap.parse_args()
+    HIGH_RISK_CUTOFF = args.cutoff
     args.out.mkdir(parents=True, exist_ok=True)
 
     df = add_series_lag(load_required(args.csv))
