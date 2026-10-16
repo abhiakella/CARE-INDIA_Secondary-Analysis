@@ -19,11 +19,14 @@ th <- theme_minimal(base_size = 10) +
 org_cols <- c("K. pneumoniae" = "#E41A1C", "A. baumannii" = "#377EB8", "P. aeruginosa" = "#4DAF4A",
               "Enterobacter spp." = "#FF7F00", "E. coli" = "#984EA3", "Enterobacterales" = "#A65628")
 org_ord <- c("E. coli", "K. pneumoniae", "A. baumannii", "P. aeruginosa", "Enterobacter spp.")
-save_fig <- function(p, name, w, h) {
+save_fig <- function(p, name, w, h) {   # w, h in mm; TIFF for submission, PNG for embedding
   ggsave(file.path(OUT, paste0(name, ".tiff")), p, width = w, height = h, units = "mm", dpi = 300, device = "tiff", compression = "lzw", bg = "white")
   ggsave(file.path(OUT, paste0(name, ".png")),  p, width = w, height = h, units = "mm", dpi = 300, bg = "white")
+  ggsave(file.path(OUT, paste0(name, ".jpg")),  p, width = w, height = h, units = "mm", dpi = 300, device = "jpeg", quality = 95, bg = "white")
+  ggsave(file.path(OUT, paste0(name, ".pdf")),  p, width = w, height = h, units = "mm", device = grDevices::cairo_pdf, bg = "white")
 }
 
+# ---- Figure 1: meropenem resistance trends, five organisms; S1: imipenem; S2: faceted both carbapenems ----
 trend_plot <- function(abx) {
   amrsn_ee_long %>% filter(antibiotic == abx) %>% mutate(organism = factor(organism, levels = org_ord)) %>%
     ggplot(aes(year, resistance_pct, colour = organism, shape = organism)) +
@@ -41,24 +44,33 @@ s2 <- amrsn_ee_long %>% mutate(organism = factor(organism, levels = org_ord)) %>
   labs(x = "Year", y = "Resistance (%)") + th
 save_fig(s2, "FigureS2_carbapenems_by_organism", 170, 110)
 
+# ---- Figure 2: 2024 cumulative antibiogram heatmap; Figure 3: therapeutic tiers (80 / 60 / 10 boundaries) ----
 drug_ord <- c("Piperacillin-tazobactam", "Cefotaxime", "Ceftazidime", "Cefepime", "Ertapenem", "Imipenem", "Meropenem",
               "Amikacin", "Gentamicin", "Tobramycin", "Ciprofloxacin", "Levofloxacin", "Colistin", "Minocycline")
-d24 <- full_long %>% filter(year == 2024) %>% mutate(drug = factor(drug, levels = rev(drug_ord)), organism = factor(organism, levels = org_ord))
+d24 <- full_long %>% filter(year == 2024) %>% select(organism, drug, tested, susc_pct) %>%
+  tidyr::complete(organism = org_ord, drug = drug_ord) %>%                      # untested agent-organism pairs become explicit NA cells
+  mutate(drug = factor(drug, levels = rev(drug_ord)), organism = factor(organism, levels = org_ord), tested_flag = !is.na(susc_pct))
+NT_FILL <- "#C8C8C8"
 f2 <- ggplot(d24, aes(organism, drug, fill = susc_pct)) + geom_tile(colour = "white", linewidth = 0.4) +
-  geom_text(aes(label = round(susc_pct)), size = 2.8) +
-  scale_fill_gradientn(colours = c("#B2182B", "#EF8A62", "#FDDBC7", "#D1E5F0", "#2166AC"), limits = c(0, 100), name = "Susceptible (%)") +
+  geom_text(data = d24 %>% filter(tested_flag), aes(label = round(susc_pct)), size = 2.8) +
+  geom_text(data = d24 %>% filter(!tested_flag), label = "NT", size = 2.4, colour = "grey35") +
+  scale_fill_gradientn(colours = c("#D73027", "#FC8D59", "#FEE090", "#ABD9E9", "#4575B4"), values = c(0, 0.25, 0.5, 0.75, 1), limits = c(0, 100), name = "Susceptible (%)",
+                       na.value = NT_FILL) +
+  labs(caption = "Grey cells (NT): agent not tested for that organism") +
   labs(x = NULL, y = NULL) + th + theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 20, hjust = 1, face = "italic"))
 save_fig(f2, "Figure2_antibiogram_2024", 150, 120)
 
 TIER_BREAKS <- c(-1, 10, 60, 80, 101); TIER_LABELS <- c("Inactive (<10%)", "Not recommended (10-59%)", "Conditional (60-79%)", "Preferred (>=80%)")
-tier24 <- d24 %>% mutate(tier = cut(susc_pct, TIER_BREAKS, labels = TIER_LABELS))
-write_csv(tier24 %>% select(organism, drug, tested, susc_pct, tier) %>% arrange(organism, drug), file.path(OUT, "table_tiers_2024_80_60.csv"))
+tier24 <- d24 %>% mutate(tier = cut(susc_pct, TIER_BREAKS, labels = TIER_LABELS),
+                         tier = factor(ifelse(is.na(tier), "Not tested", as.character(tier)), levels = c(TIER_LABELS, "Not tested")))
+write_csv(tier24 %>% filter(tested_flag) %>% select(organism, drug, tested, susc_pct, tier) %>% arrange(organism, drug), file.path(OUT, "table_tiers_2024_80_60.csv"))
 f3 <- ggplot(tier24, aes(organism, drug, fill = tier)) + geom_tile(colour = "white", linewidth = 0.4) +
-  geom_text(aes(label = round(susc_pct)), size = 2.6) +
-  scale_fill_manual(values = c("#B2182B", "#EF8A62", "#FEE08B", "#1A9850"), name = "Tier", drop = FALSE) + guides(fill = guide_legend(nrow = 2)) +
+  geom_text(data = tier24 %>% filter(tested_flag), aes(label = round(susc_pct)), size = 2.6) +
+  scale_fill_manual(values = c("#D73027", "#FC8D59", "#FEE090", "#4575B4", NT_FILL), name = "Tier", drop = FALSE) + guides(fill = guide_legend(nrow = 3, byrow = FALSE)) +
   labs(x = NULL, y = NULL) + th + theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 20, hjust = 1, face = "italic"))
 save_fig(f3, "Figure3_tier_map_2024", 150, 125)
 
+# ---- Figure 4: carbapenemase genes, (a) ICMR-AMRSN 2024 panel and (b) curated Indian literature ----
 gt <- read_csv(file.path(root, "data", "gene_trends.csv"), show_col_types = FALSE)
 genes <- c("NDM", "OXA-23", "OXA-48", "KPC", "VIM", "IMP"); gene_cols <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#8BC34A", "#F2C80F")
 ga <- gt %>% filter(gene %in% genes, year == 2024, organism %in% c("E. coli", "K. pneumoniae", "A. baumannii", "P. aeruginosa")) %>%
@@ -75,6 +87,7 @@ f4b <- ggplot(gb, aes(point, label, fill = gene)) + geom_col(width = 0.7) +
 f4 <- (f4a / f4b) + plot_layout(heights = c(1, 0.9)) + plot_annotation(tag_levels = "a")
 save_fig(f4, "Figure4_carbapenemase_genes", 170, 170)
 
+# ---- Figure 5: trend-based carbapenem forecast (needs output/forecast/table_forecast_trend_2025_2028.csv) ----
 fcf <- file.path(root, "output", "forecast", "table_forecast_trend_2025_2028.csv")
 if (file.exists(fcf)) {
   EPS <- 5e-4; lgt <- function(p) { pp <- pmax(EPS, pmin(1 - EPS, p / 100)); log(pp / (1 - pp)) }; inv <- function(x) 100 / (1 + exp(-x))
@@ -95,6 +108,7 @@ if (file.exists(fcf)) {
   save_fig(f5, "Figure5_forecast_carbapenems", 170, 150)
 } else cat("Figure 5 skipped: run R/03_forecast_trend.R first\n")
 
+# ---- Figure 6: meropenem susceptibility by infection syndrome, 2024, with 80% and 60% reference lines ----
 syn <- read_csv(file.path(root, "data", "syndrome_key_antibiogram_2024.csv"), show_col_types = FALSE) %>% filter(drug == "Meropenem") %>%
   mutate(syndrome = factor(syndrome, levels = c("BSI", "UTI", "VAP"), labels = c("Bloodstream infection", "Urinary tract infection", "Ventilator-associated pneumonia")),
          organism = factor(organism, levels = c("K. pneumoniae", "E. coli", "Enterobacterales", "A. baumannii", "P. aeruginosa")))
@@ -106,11 +120,16 @@ f6 <- ggplot(syn, aes(syndrome, susc_pct, fill = organism)) + geom_col(position 
   labs(x = NULL, y = "Meropenem susceptibility (%)") + th
 save_fig(f6, "Figure6_syndrome_meropenem_2024", 170, 95)
 
-hm <- full_long %>% mutate(drug = factor(drug, levels = rev(drug_ord)), organism = factor(organism, levels = org_ord))
-fs <- ggplot(hm, aes(factor(year), drug, fill = susc_pct)) + geom_tile(colour = "white", linewidth = 0.3) + geom_text(aes(label = round(susc_pct)), size = 2.1) +
-  facet_wrap(~organism, ncol = 3, scales = "free_y") +
-  scale_fill_gradientn(colours = c("#B2182B", "#EF8A62", "#FDDBC7", "#D1E5F0", "#2166AC"), limits = c(0, 100), name = "Susceptible (%)") +
+# ---- Supplementary: year-by-year antibiogram heatmap, all 47 organism-drug pairs ----
+hm <- full_long %>% select(organism, drug, year, susc_pct) %>% tidyr::complete(organism = org_ord, drug = drug_ord, year = 2017:2024) %>%
+  mutate(drug = factor(drug, levels = rev(drug_ord)), organism = factor(organism, levels = org_ord), yr = factor(year), tested_flag = !is.na(susc_pct))
+fs <- ggplot(hm, aes(yr, drug, fill = susc_pct)) + geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = hm %>% filter(tested_flag), aes(label = round(susc_pct)), size = 2.1) +
+  facet_wrap(~organism, ncol = 3) +
+  scale_fill_gradientn(colours = c("#D73027", "#FC8D59", "#FEE090", "#ABD9E9", "#4575B4"), values = c(0, 0.25, 0.5, 0.75, 1), limits = c(0, 100), name = "Susceptible (%)",
+                       na.value = NT_FILL) +
+  labs(caption = "Grey cells: agent not tested for that organism") +
   scale_x_discrete(labels = function(x) paste0("'", substr(x, 3, 4))) +
   labs(x = "Year", y = NULL) + th + theme(panel.grid = element_blank(), axis.text.x = element_text(size = 7), axis.text.y = element_text(size = 7.5))
-save_fig(fs, "FigureS_antibiogram_by_year", 190, 190)
+save_fig(fs, "FigureS_antibiogram_by_year", 190, 215)
 cat("Revision figures written to output/figures_revision/\n")

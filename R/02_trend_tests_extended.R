@@ -14,6 +14,7 @@ dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 fl <- full_long %>% arrange(organism, drug, year)
 CARB <- c("Imipenem", "Meropenem")
 
+# ---- 1. all organism-drug pairs: weighted regression (primary), unweighted sensitivity, Holm / BH --------
 lm_pairs <- fl %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   fw <- stats::lm(res_pct ~ year, data = d, weights = tested)
   fu <- stats::lm(res_pct ~ year, data = d)
@@ -28,6 +29,8 @@ lm_pairs <- fl %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   arrange(p_weighted)
 write_csv(lm_pairs, file.path(OUT, "table_trend_weighted_lm_all_pairs.csv"))
 
+# ---- 1b. primary multiplicity family = the ten pre-specified organism-carbapenem pairs (objective 1);
+#          the 47-pair family above is retained as a sensitivity analysis --------------------------------
 carb10 <- lm_pairs %>% filter(drug %in% CARB) %>%
   mutate(p_holm_carb10 = stats::p.adjust(p_weighted, "holm"), p_bh_carb10 = stats::p.adjust(p_weighted, "BH"),
          p_holm_47 = p_weighted_holm, p_bh_47 = p_weighted_bh) %>%
@@ -42,6 +45,7 @@ ca_pairs <- fl %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   mutate(p_holm = stats::p.adjust(p_value, "holm"), p_bh = stats::p.adjust(p_value, "BH")) %>% arrange(p_value)
 write_csv(ca_pairs, file.path(OUT, "table_trend_cochran_armitage_all_pairs.csv"))
 
+# ---- 2. organism-carbapenem pairs: pre-/post-2020 interaction model (weighted; unadjusted, Holm, BH) -----
 carb <- fl %>% filter(drug %in% CARB)
 inter <- carb %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   d <- d %>% mutate(yc = year - 2020, period = factor(year >= 2020, levels = c(FALSE, TRUE), labels = c("pre", "post")))
@@ -53,6 +57,7 @@ inter <- carb %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   mutate(p_holm = stats::p.adjust(p_interaction, "holm"), p_bh = stats::p.adjust(p_interaction, "BH"))
 write_csv(inter, file.path(OUT, "table_covid_interaction_carbapenems.csv"))
 
+# ---- 3. organism-carbapenem pairs: piecewise (hinge) grid search over candidate knots 2019-2022 ----------
 grid <- carb %>% group_by(organism, drug) %>% group_modify(function(d, k) {
   fit0 <- stats::lm(res_pct ~ year, data = d, weights = tested)
   map_dfr(2019:2022, function(bp) {
@@ -68,6 +73,7 @@ write_csv(grid, file.path(OUT, "table_piecewise_grid_all_knots.csv"))
 write_csv(grid %>% group_by(organism, drug) %>% slice_min(aic_piecewise, n = 1, with_ties = FALSE) %>% ungroup(),
           file.path(OUT, "table_piecewise_grid_best_knot.csv"))
 
+# ---- console summary ------------------------------------------------------------------------------------
 cat(sprintf("\nPairs tested: %d (weighted regression); Holm-significant: %d; BH-significant: %d\n",
             nrow(lm_pairs), sum(lm_pairs$p_weighted_holm < 0.05), sum(lm_pairs$p_weighted_bh < 0.05)))
 print(as.data.frame(lm_pairs %>% filter(drug %in% c(CARB, "Ertapenem"), organism %in% c("K. pneumoniae", "E. coli")) %>%

@@ -2,6 +2,8 @@
 # CARE-INDIA (Carbapenem resistance among Gram-negative ESKAPEE pathogens in India, 2017-2024)
 # Classifier baseline comparators with calibration and bootstrap-CI diagnostics.
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
+# License: MIT (see LICENSE)
+
 from __future__ import annotations
 
 import argparse
@@ -26,6 +28,7 @@ except ImportError as e:
     print("Install: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
+
 RANDOM_STATE     = 42
 HIGH_RISK_CUTOFF = 60
 N_BOOTSTRAP      = 1000
@@ -40,24 +43,30 @@ GENETIC_MAP = {
 
 FULL_FEATURES = [
     "organism", "drug", "year", "log_tested", "lag_susc_pct",
-    "india_cre_rate", "has_ndm", "is_oxa23_driven",
-]
+]  # organism-level genetic constants removed (R1): collinear with organism identity
 NO_LAG_FEATURES = ["organism", "drug", "year", "log_tested"]
-NO_VOLUME_FEATURES = ["organism", "drug", "year"]
+NO_VOLUME_FEATURES = ["organism", "drug", "year"]        # ablation: no-lag model without the testing-volume feature
 
+
+# Lagged susceptibility defined on the FULL (organism, drug) series: the previous CALENDAR year's value
+# (NaN when that year is absent). Computed once, before any train/test partitioning, so that 'last year'
+# always means last year regardless of which partition that year falls in.
 def series_lag(df: pd.DataFrame) -> np.ndarray:
     prev = df[["organism", "drug", "year", "susc_pct"]].copy()
     prev["year"] = prev["year"] + 1
     prev = prev.rename(columns={"susc_pct": "lag_susc_pct"})
     return df[["organism", "drug", "year"]].merge(prev, on=["organism", "drug", "year"], how="left")["lag_susc_pct"].to_numpy()
 
+
 def add_series_lag(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+    df = df.copy()                       # row order deliberately preserved so the seeded 75/25 split is unchanged
     df["lag_susc_pct"] = series_lag(df)
     return df
 
+
 def aas_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
 
 def load_required(csv_path: Path, label: str) -> pd.DataFrame:
     if not csv_path.exists():
@@ -69,6 +78,7 @@ def load_required(csv_path: Path, label: str) -> pd.DataFrame:
         raise SystemExit(f"{label} CSV missing columns: {miss}")
     return df
 
+
 def add_lag_and_genetic(
     df: pd.DataFrame,
     lag_fill: float,
@@ -77,7 +87,7 @@ def add_lag_and_genetic(
     df = df.copy()
     df["log_tested"] = np.log1p(df["tested"].astype(float))
     df.sort_values(["organism", "drug", "year"], inplace=True)
-    if "lag_susc_pct" not in df.columns:
+    if "lag_susc_pct" not in df.columns:      # not pre-computed on the full series (e.g. the external set)
         df["lag_susc_pct"] = series_lag(df)
 
     if lag_lookup is not None:
@@ -98,6 +108,7 @@ def add_lag_and_genetic(
     df = df.merge(gen_df, on="organism", how="left")
     return df
 
+
 def make_lr_pipe(features: list[str]) -> Pipeline:
     cat = [c for c in ["organism", "drug"] if c in features]
     num = [c for c in ["year", "log_tested", "lag_susc_pct", "india_cre_rate"] if c in features]
@@ -107,10 +118,11 @@ def make_lr_pipe(features: list[str]) -> Pipeline:
             ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
             ("num", StandardScaler(),                       num),
             ("bin", "passthrough",                          bin_),
-        ])),
+        ], sparse_threshold=0)),
         ("lr", LogisticRegression(max_iter=1000, class_weight="balanced",
                                   random_state=RANDOM_STATE)),
     ])
+
 
 def make_rf_pipe(features: list[str]) -> Pipeline:
     cat = [c for c in ["organism", "drug"] if c in features]
@@ -121,12 +133,13 @@ def make_rf_pipe(features: list[str]) -> Pipeline:
             ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
             ("num", StandardScaler(),                       num),
             ("bin", "passthrough",                          bin_),
-        ])),
+        ], sparse_threshold=0)),
         ("rf", RandomForestClassifier(
             n_estimators=300, max_depth=8, min_samples_leaf=2,
             class_weight="balanced", random_state=RANDOM_STATE, n_jobs=-1,
         )),
     ])
+
 
 def bootstrap_auc_ci(y_true: np.ndarray, y_proba: np.ndarray,
                      n_bootstrap: int = N_BOOTSTRAP,
@@ -145,6 +158,7 @@ def bootstrap_auc_ci(y_true: np.ndarray, y_proba: np.ndarray,
         return float("nan"), float("nan")
     return float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5))
 
+
 def calibration_slope_intercept(y_true: np.ndarray, y_proba: np.ndarray) -> tuple[float, float]:
     unique_p = np.unique(y_proba)
     if len(unique_p) < 3 or len(np.unique(y_true)) < 2:
@@ -154,6 +168,7 @@ def calibration_slope_intercept(y_true: np.ndarray, y_proba: np.ndarray) -> tupl
     logit = np.log(p / (1 - p)).reshape(-1, 1)
     fit   = LogisticRegression(max_iter=1000).fit(logit, y_true)
     return float(fit.coef_[0, 0]), float(fit.intercept_[0])
+
 
 def evaluate(name: str, y_true: np.ndarray, y_proba: np.ndarray,
              y_class: np.ndarray) -> dict:
@@ -181,25 +196,29 @@ def evaluate(name: str, y_true: np.ndarray, y_proba: np.ndarray,
         "accuracy":         accuracy,
     }
 
+
 def predictions_for_all_models(
     train_feat: pd.DataFrame, eval_feat: pd.DataFrame,
     y_train: pd.Series, y_eval: pd.Series,
 ) -> dict:
-    pass
+    """Fit each comparator on training data; return predictions on eval set."""
     out = {}
 
+    # A. naive lag rule (binary)
     naive_class = (eval_feat["lag_susc_pct"] < HIGH_RISK_CUTOFF).astype(int).values
     out["naive_lag_rule"] = {
         "y_proba": naive_class.astype(float),
         "y_class": naive_class,
     }
 
+    # B. lag as continuous score
     lag_score = (1.0 - eval_feat["lag_susc_pct"].clip(0, 100) / 100.0).values
     out["lag_as_score"] = {
         "y_proba": lag_score,
         "y_class": (lag_score >= 0.5).astype(int),
     }
 
+    # B2. cell-mean antibiogram lookup baseline (0 params)
     pair_mean   = train_feat.groupby(["organism", "drug"])["susc_pct"].mean()
     global_mean = float(train_feat["susc_pct"].mean())
     cm_susc = eval_feat.apply(
@@ -210,6 +229,7 @@ def predictions_for_all_models(
         "y_class": (cm_susc < HIGH_RISK_CUTOFF).astype(int),
     }
 
+    # C. no-lag LR
     lr_no_lag = make_lr_pipe(NO_LAG_FEATURES)
     lr_no_lag.fit(train_feat[NO_LAG_FEATURES], y_train)
     no_lag_proba = lr_no_lag.predict_proba(eval_feat[NO_LAG_FEATURES])[:, 1]
@@ -218,6 +238,7 @@ def predictions_for_all_models(
         "y_class": (no_lag_proba >= 0.5).astype(int),
     }
 
+    # C2. no-lag LR without log_tested (ablation for the external covariate shift in testing volume)
     lr_no_vol = make_lr_pipe(NO_VOLUME_FEATURES)
     lr_no_vol.fit(train_feat[NO_VOLUME_FEATURES], y_train)
     no_vol_proba = lr_no_vol.predict_proba(eval_feat[NO_VOLUME_FEATURES])[:, 1]
@@ -226,6 +247,7 @@ def predictions_for_all_models(
         "y_class": (no_vol_proba >= 0.5).astype(int),
     }
 
+    # D. full LR
     lr_full = make_lr_pipe(FULL_FEATURES)
     lr_full.fit(train_feat[FULL_FEATURES], y_train)
     full_lr_proba = lr_full.predict_proba(eval_feat[FULL_FEATURES])[:, 1]
@@ -234,6 +256,7 @@ def predictions_for_all_models(
         "y_class": (full_lr_proba >= 0.5).astype(int),
     }
 
+    # E. full RF
     rf_full = make_rf_pipe(FULL_FEATURES)
     rf_full.fit(train_feat[FULL_FEATURES], y_train)
     full_rf_proba = rf_full.predict_proba(eval_feat[FULL_FEATURES])[:, 1]
@@ -243,6 +266,7 @@ def predictions_for_all_models(
     }
 
     return out
+
 
 def plot_calibration(preds: dict, y_true: np.ndarray, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -269,6 +293,7 @@ def plot_calibration(preds: dict, y_true: np.ndarray, out_path: Path) -> None:
     plt.savefig(out_path, dpi=200)
     plt.close()
 
+
 def plot_auc_forest(rows: list[dict], title: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 0.6 * len(rows) + 1.5))
     ys = np.arange(len(rows))[::-1]
@@ -289,6 +314,7 @@ def plot_auc_forest(rows: list[dict], title: str, out_path: Path) -> None:
     plt.savefig(out_path, dpi=200)
     plt.close()
 
+
 def main() -> None:
     global HIGH_RISK_CUTOFF
     parser = argparse.ArgumentParser()
@@ -303,9 +329,10 @@ def main() -> None:
     HIGH_RISK_CUTOFF = args.cutoff
     args.out.mkdir(parents=True, exist_ok=True)
 
-    df_raw = add_series_lag(load_required(args.csv, "AMRSN"))
+    df_raw = add_series_lag(load_required(args.csv, "AMRSN"))   # lag fixed on the full series before any split
     y_all  = (df_raw["susc_pct"] < HIGH_RISK_CUTOFF).astype(int)
 
+    # 75/25 stratified train/test split
     train_df, test_df = train_test_split(
         df_raw, test_size=0.25, stratify=y_all, random_state=RANDOM_STATE
     )
@@ -316,6 +343,7 @@ def main() -> None:
     y_train = (train_feat["susc_pct"] < HIGH_RISK_CUTOFF).astype(int).values
     y_test  = (test_feat["susc_pct"]  < HIGH_RISK_CUTOFF).astype(int).values
 
+    # Holdout evaluation
     preds_holdout = predictions_for_all_models(train_feat, test_feat,
                                                y_train, y_test)
     holdout_rows = [
@@ -339,6 +367,7 @@ def main() -> None:
     plot_auc_forest(holdout_rows, "AUC on 25% holdout (95% bootstrap CI)",
                     args.out / "fig_auc_forest_holdout.png")
 
+    # External evaluation
     external_rows: list[dict] = []
     if args.external_csv.exists():
         ext_raw = load_required(args.external_csv, "External")
@@ -367,6 +396,7 @@ def main() -> None:
                         f"AUC on external set (n={len(y_ext)}, 95% bootstrap CI)",
                         args.out / "fig_auc_forest_external.png")
 
+        # Paired bootstrap of ROC-AUC differences on the external set (identical resamples for both models)
         def paired_auc_diff(a: np.ndarray, b: np.ndarray, n_boot: int = N_BOOTSTRAP,
                             seed: int = RANDOM_STATE) -> dict:
             rng = np.random.default_rng(seed); n = len(y_ext); diffs = []
@@ -391,6 +421,7 @@ def main() -> None:
     else:
         print(f"\nExternal CSV not found at {args.external_csv} -  skipped.")
 
+    # Write JSON summary
     summary = {
         "method":               "Seven-model comparator: naive_lag_rule, lag_as_score, cell_mean_lookup, no_lag_LR, "
                                 "no_lag_LR_no_volume, full_LR, full_RF",
@@ -410,6 +441,7 @@ def main() -> None:
         json.dumps(summary, indent=2), encoding="utf-8"
     )
 
+    # Headline interpretation
     if holdout_rows:
         rf  = next(r for r in holdout_rows if r["model"] == "full_RF")
         nl  = next(r for r in holdout_rows if r["model"] == "naive_lag_rule")
@@ -438,6 +470,7 @@ def main() -> None:
         "table_paired_bootstrap_external.csv",
     ]:
         print(" ", args.out / f)
+
 
 if __name__ == "__main__":
     main()

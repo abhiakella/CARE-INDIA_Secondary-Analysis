@@ -29,6 +29,7 @@ except ImportError as e:
     print("Install: pip install -r python/requirements.txt", file=sys.stderr)
     sys.exit(1)
 
+
 RANDOM_STATE = 42
 
 GENETIC_MAP = {
@@ -41,25 +42,31 @@ GENETIC_MAP = {
 
 FEATURE_COLS = [
     "organism", "drug", "year", "log_tested", "lag_susc_pct",
-    "india_cre_rate", "has_ndm", "is_oxa23_driven",
-]
+]  # organism-level genetic constants removed (R1): collinear with organism identity
 CAT_COLS = ["organism", "drug"]
-NUM_COLS = ["year", "log_tested", "lag_susc_pct", "india_cre_rate"]
-BIN_COLS = ["has_ndm", "is_oxa23_driven"]
+NUM_COLS = ["year", "log_tested", "lag_susc_pct"]
+BIN_COLS: list[str] = []  # genetic constants removed (R1)
 
+
+# Lagged susceptibility defined on the FULL (organism, drug) series: the previous CALENDAR year's value
+# (NaN when that year is absent). Computed once, before any train/test partitioning, so that 'last year'
+# always means last year regardless of which partition that year falls in.
 def series_lag(df: pd.DataFrame) -> np.ndarray:
     prev = df[["organism", "drug", "year", "susc_pct"]].copy()
     prev["year"] = prev["year"] + 1
     prev = prev.rename(columns={"susc_pct": "lag_susc_pct"})
     return df[["organism", "drug", "year"]].merge(prev, on=["organism", "drug", "year"], how="left")["lag_susc_pct"].to_numpy()
 
+
 def add_series_lag(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+    df = df.copy()                       # row order deliberately preserved so the seeded 75/25 split is unchanged
     df["lag_susc_pct"] = series_lag(df)
     return df
 
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
 
 def load_amrsn(csv_path: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
@@ -69,6 +76,7 @@ def load_amrsn(csv_path: Path) -> pd.DataFrame:
         raise SystemExit(f"AMRSN CSV missing columns: {miss}")
     return df
 
+
 def load_external(csv_path: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     need = {"organism", "drug", "year", "tested", "susc_pct", "res_pct"}
@@ -77,11 +85,13 @@ def load_external(csv_path: Path) -> pd.DataFrame:
         raise SystemExit(f"External CSV missing columns: {miss}")
     return df
 
+
 def add_lag_and_genetic(df: pd.DataFrame, lag_fill: float, lag_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Add lag_susc_pct (within-pair shift) and hardcoded genetic features."""
     df = df.copy()
     df["log_tested"] = np.log1p(df["tested"].astype(float))
     df.sort_values(["organism", "drug", "year"], inplace=True)
-    if "lag_susc_pct" not in df.columns:
+    if "lag_susc_pct" not in df.columns:      # not pre-computed on the full series (e.g. the external set)
         df["lag_susc_pct"] = series_lag(df)
 
     if lag_lookup is not None:
@@ -103,12 +113,13 @@ def add_lag_and_genetic(df: pd.DataFrame, lag_fill: float, lag_lookup: pd.DataFr
     df = df.merge(gen_df, on="organism", how="left")
     return df
 
+
 def make_preprocessor() -> ColumnTransformer:
     return ColumnTransformer([
         ("cat", OneHotEncoder(handle_unknown="ignore"), CAT_COLS),
         ("num", StandardScaler(),                       NUM_COLS),
-        ("bin", "passthrough",                          BIN_COLS),
-    ])
+    ], sparse_threshold=0)  # dense output required by the SHAP TreeExplainer
+
 
 def make_rf() -> RandomForestClassifier:
     return RandomForestClassifier(
@@ -119,6 +130,7 @@ def make_rf() -> RandomForestClassifier:
         random_state=RANDOM_STATE,
         n_jobs=-1,
     )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -142,8 +154,9 @@ def main() -> None:
         )
         sys.exit(1)
 
-    df_raw = add_series_lag(load_amrsn(args.csv))
+    df_raw = add_series_lag(load_amrsn(args.csv))   # lag fixed on the full series before any split
 
+    # Stratified 75/25 train/test split and feature engineering
     y_all = (df_raw["susc_pct"] < 60).astype(int)
     train_df, test_df = train_test_split(
         df_raw, test_size=0.25, stratify=y_all, random_state=RANDOM_STATE
@@ -162,6 +175,7 @@ def main() -> None:
     pred  = (proba >= 0.5).astype(int)
     holdout_auc = float(roc_auc_score(y_test, proba))
 
+    # Logistic-regression baseline
     lr_pipe = Pipeline([
         ("prep", make_preprocessor()),
         ("lr",   LogisticRegression(max_iter=1000, class_weight="balanced",
@@ -170,6 +184,7 @@ def main() -> None:
     lr_pipe.fit(X_train, y_train)
     lr_auc = float(roc_auc_score(y_test, lr_pipe.predict_proba(X_test)[:, 1]))
 
+    # External validation on independent literature dataset
     external_metrics = {}
     if args.external_csv.exists():
         ext_raw = load_external(args.external_csv)
@@ -203,6 +218,7 @@ def main() -> None:
     else:
         print(f"External CSV not found at {args.external_csv} -  skipping external validation.")
 
+    # Save metrics and classification report
     metrics = {
         "holdout_roc_auc":              holdout_auc,
         "holdout_logreg_baseline":      lr_auc,
@@ -219,6 +235,7 @@ def main() -> None:
         classification_report(y_test, pred, digits=3), encoding="utf-8"
     )
 
+    # Permutation importance
     perm = permutation_importance(
         pipe, X_test, y_test, n_repeats=20, random_state=RANDOM_STATE, n_jobs=-1
     )
@@ -230,6 +247,7 @@ def main() -> None:
         out / "table_permutation_importance.csv", index=False
     )
 
+    # SHAP interpretability
     prep = pipe.named_steps["prep"]
     rf   = pipe.named_steps["rf"]
 
@@ -258,6 +276,7 @@ def main() -> None:
                 facecolor="white", edgecolor="white")
     plt.close()
 
+    # Risk scores on holdout
     test_feat.assign(
         empiric_failure_prob=proba,
         high_risk_label=y_test.values,
@@ -269,6 +288,7 @@ def main() -> None:
     print("      ", out / "table_permutation_importance.csv")
     if external_metrics:
         print("      ", out / "table_external_validation_predictions.csv")
+
 
 if __name__ == "__main__":
     main()

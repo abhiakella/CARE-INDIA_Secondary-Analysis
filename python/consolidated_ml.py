@@ -2,6 +2,7 @@
 # Supervised high-risk classifier (logistic regression + random forest): 75/25 holdout, external, and rolling-origin validation
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
 # License: MIT (see LICENSE)
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,8 @@ except ImportError as e:
     print("Missing dependency:", e, file=sys.stderr)
     sys.exit(1)
 
+
+# Configuration constants and organism genetic feature lookup
 RANDOM_STATE        = 42
 HIGH_RISK_CUTOFF    = 60
 N_BOOTSTRAP         = 1000
@@ -40,20 +43,26 @@ GENETIC_MAP = {
 }
 
 NO_LAG_FEATURES = ["organism", "drug", "year", "log_tested"]
-FULL_FEATURES   = ["organism", "drug", "year", "log_tested", "lag_susc_pct",
-                   "india_cre_rate", "has_ndm", "is_oxa23_driven"]
+FULL_FEATURES   = ["organism", "drug", "year", "log_tested", "lag_susc_pct"]  # organism-level genetic constants removed (R1): collinear with organism identity
 
+
+# Lagged susceptibility defined on the FULL (organism, drug) series: the previous CALENDAR year's value
+# (NaN when that year is absent). Computed once, before any train/test partitioning, so that 'last year'
+# always means last year regardless of which partition that year falls in.
 def series_lag(df: pd.DataFrame) -> np.ndarray:
     prev = df[["organism", "drug", "year", "susc_pct"]].copy()
     prev["year"] = prev["year"] + 1
     prev = prev.rename(columns={"susc_pct": "lag_susc_pct"})
     return df[["organism", "drug", "year"]].merge(prev, on=["organism", "drug", "year"], how="left")["lag_susc_pct"].to_numpy()
 
+
 def add_series_lag(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+    df = df.copy()                       # row order deliberately preserved so the seeded 75/25 split is unchanged
     df["lag_susc_pct"] = series_lag(df)
     return df
 
+
+# Load and validate a required long-format surveillance CSV
 def load_required(csv_path: Path, label: str) -> pd.DataFrame:
     if not csv_path.exists():
         raise SystemExit(f"{label} CSV not found: {csv_path}")
@@ -64,6 +73,8 @@ def load_required(csv_path: Path, label: str) -> pd.DataFrame:
         raise SystemExit(f"{label} CSV missing columns: {miss}")
     return df
 
+
+# Feature engineering: log-tested, lagged susceptibility, and genetic features
 def add_features(
     df: pd.DataFrame,
     lag_fill: float,
@@ -72,7 +83,7 @@ def add_features(
     df = df.copy()
     df["log_tested"] = np.log1p(df["tested"].astype(float))
     df.sort_values(["organism", "drug", "year"], inplace=True)
-    if "lag_susc_pct" not in df.columns:
+    if "lag_susc_pct" not in df.columns:      # not pre-computed on the full series (e.g. the external set)
         df["lag_susc_pct"] = series_lag(df)
 
     if lag_lookup is not None:
@@ -97,6 +108,8 @@ def add_features(
             df[col] = df[col].fillna(0)
     return df
 
+
+# Build preprocessing + classifier pipeline (logistic regression or random forest)
 def make_pipe(model: str, features: list[str]) -> Pipeline:
     cat = [c for c in ["organism", "drug"] if c in features]
     num = [c for c in ["year", "log_tested", "lag_susc_pct", "india_cre_rate"] if c in features]
@@ -105,7 +118,7 @@ def make_pipe(model: str, features: list[str]) -> Pipeline:
         ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
         ("num", StandardScaler(),                       num),
         ("bin", "passthrough",                          bin_),
-    ])
+    ], sparse_threshold=0)
     if model == "lr":
         clf = LogisticRegression(max_iter=1000, class_weight="balanced",
                                  random_state=RANDOM_STATE)
@@ -121,6 +134,8 @@ def make_pipe(model: str, features: list[str]) -> Pipeline:
         raise ValueError(f"unknown model {model}")
     return Pipeline([("prep", prep), ("clf", clf)])
 
+
+# Model roster: primary logistic regression plus two sensitivity models
 MODELS = [
     ("no_lag_LR",  "lr", NO_LAG_FEATURES, "PRIMARY"),
     ("full_LR",    "lr", FULL_FEATURES,   "Sensitivity (best-calibrated)"),
@@ -128,6 +143,8 @@ MODELS = [
     ("full_HGB",   "hgb", FULL_FEATURES,  "Sensitivity (gradient boosting)"),
 ]
 
+
+# Bootstrap 95% CI for ROC-AUC
 def bootstrap_auc_ci(y_true: np.ndarray, y_proba: np.ndarray,
                      n_bootstrap: int = N_BOOTSTRAP,
                      random_state: int = RANDOM_STATE) -> tuple[float, float]:
@@ -145,6 +162,8 @@ def bootstrap_auc_ci(y_true: np.ndarray, y_proba: np.ndarray,
         return float("nan"), float("nan")
     return float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5))
 
+
+# Calibration slope and intercept via logistic recalibration
 def calibration_slope_intercept(y_true: np.ndarray, y_proba: np.ndarray) -> tuple[float, float]:
     if len(np.unique(y_true)) < 2 or len(np.unique(y_proba)) < 3:
         return float("nan"), float("nan")
@@ -154,6 +173,8 @@ def calibration_slope_intercept(y_true: np.ndarray, y_proba: np.ndarray) -> tupl
     fit = LogisticRegression(max_iter=1000).fit(logit, y_true)
     return float(fit.coef_[0, 0]), float(fit.intercept_[0])
 
+
+# Compute discrimination and calibration metrics for one model
 def evaluate(name: str, role: str, y_true: np.ndarray, y_proba: np.ndarray) -> dict:
     y_true = np.asarray(y_true, dtype=int)
     y_proba = np.asarray(y_proba, dtype=float)
@@ -176,6 +197,8 @@ def evaluate(name: str, role: str, y_true: np.ndarray, y_proba: np.ndarray) -> d
         "accuracy":      float((pred_class == y_true).mean()),
     }
 
+
+# Fit all models on train, predict high-risk probabilities on the eval set
 def fit_predict_all(train_feat: pd.DataFrame, eval_feat: pd.DataFrame,
                     y_train: np.ndarray) -> dict:
     out: dict = {}
@@ -186,6 +209,8 @@ def fit_predict_all(train_feat: pd.DataFrame, eval_feat: pd.DataFrame,
         out[name] = proba
     return out
 
+
+# Calibration plot on the holdout set
 def plot_calibration(y_true: np.ndarray, preds: dict, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot([0, 1], [0, 1], "k--", linewidth=1, label="perfect")
@@ -210,6 +235,8 @@ def plot_calibration(y_true: np.ndarray, preds: dict, out_path: Path) -> None:
     plt.savefig(out_path, dpi=200, facecolor="white", edgecolor="white")
     plt.close()
 
+
+# AUC forest plot with bootstrap confidence intervals
 def plot_auc_forest(rows: list[dict], title: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 0.6 * len(rows) + 1.5))
     ys = np.arange(len(rows))[::-1]
@@ -227,6 +254,8 @@ def plot_auc_forest(rows: list[dict], title: str, out_path: Path) -> None:
     plt.savefig(out_path, dpi=200, facecolor="white", edgecolor="white")
     plt.close()
 
+
+# Rolling-origin AUC-by-test-year plot
 def plot_rolling_origin_auc(rolling_rows: list[dict], out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     by_model: dict[str, list[tuple[int, float]]] = {}
@@ -245,6 +274,8 @@ def plot_rolling_origin_auc(rolling_rows: list[dict], out_path: Path) -> None:
     plt.savefig(out_path, dpi=200, facecolor="white", edgecolor="white")
     plt.close()
 
+
+# Rolling-origin walk-forward validation across the specified test years
 def run_rolling_origin(df_raw: pd.DataFrame) -> list[dict]:
     rows: list[dict] = []
     for test_year in TEST_YEARS:
@@ -272,6 +303,8 @@ def run_rolling_origin(df_raw: pd.DataFrame) -> list[dict]:
             rows.append(metrics)
     return rows
 
+
+# Main: holdout, external, and rolling-origin validation with outputs
 def main() -> None:
     global HIGH_RISK_CUTOFF
     parser = argparse.ArgumentParser()
@@ -295,7 +328,7 @@ def main() -> None:
     print(f"Data:     {args.csv}")
     print(f"External: {args.external_csv}\n")
 
-    df_raw = add_series_lag(load_required(args.csv, "Source"))
+    df_raw = add_series_lag(load_required(args.csv, "Source"))   # lag fixed on the full series before any split
     y_all  = (df_raw["susc_pct"] < HIGH_RISK_CUTOFF).astype(int)
 
     train_df, test_df = train_test_split(
@@ -308,6 +341,7 @@ def main() -> None:
     y_train = (train_feat["susc_pct"] < HIGH_RISK_CUTOFF).astype(int).values
     y_test  = (test_feat["susc_pct"]  < HIGH_RISK_CUTOFF).astype(int).values
 
+    # Holdout validation (75/25 stratified split)
     preds_holdout = fit_predict_all(train_feat, test_feat, y_train)
     holdout_rows = [
         evaluate(name, role, y_test, preds_holdout[name])
@@ -326,6 +360,7 @@ def main() -> None:
     plot_auc_forest(holdout_rows, "Holdout AUC (95% bootstrap CI)",
                     args.out / f"fig_{px}_auc_forest.png")
 
+    # External validation (generalisation check)
     external_rows: list[dict] = []
     if args.external_csv.exists():
         ext_raw = load_required(args.external_csv, "External")
@@ -345,6 +380,7 @@ def main() -> None:
     else:
         print(f"\nNo external CSV at {args.external_csv} - skipped.")
 
+    # Rolling-origin walk-forward validation
     print("\nRolling-origin walk-forward (test years 2022, 2023, 2024):")
     rolling_rows = run_rolling_origin(df_raw)
     if rolling_rows:
@@ -364,6 +400,7 @@ def main() -> None:
         plot_rolling_origin_auc(rolling_rows,
                                 args.out / f"fig_{px}_rolling_origin_auc.png")
 
+    # JSON summary of all validation results
     summary = {
         "label":              args.label,
         "data_source":        str(args.csv),
@@ -385,6 +422,7 @@ def main() -> None:
         json.dumps(summary, indent=2), encoding="utf-8"
     )
 
+    # Headline interpretation: primary vs sensitivity model
     if holdout_rows:
         nl = next(r for r in holdout_rows if r["model"] == "no_lag_LR")
         rf = next(r for r in holdout_rows if r["model"] == "full_RF")
@@ -406,6 +444,7 @@ def main() -> None:
         f"fig_{px}_rolling_origin_auc.png",
     ]:
         print(" ", args.out / f)
+
 
 if __name__ == "__main__":
     main()

@@ -16,6 +16,7 @@ inv <- function(x) 100 / (1 + exp(-x))
 CARB <- c("Imipenem", "Meropenem"); TARGET <- 2028
 
 proj <- function(d, knot = NULL) {
+  # weighted logit-linear trend (weights = isolates tested); optional hinge term for a piecewise trend
   if (is.null(knot)) { m <- stats::lm(lgt(res_pct) ~ year, data = d, weights = tested); nd <- data.frame(year = TARGET) }
   else { d$pw <- pmax(0, d$year - knot); m <- stats::lm(lgt(res_pct) ~ year + pw, data = d, weights = tested)
          nd <- data.frame(year = TARGET, pw = TARGET - knot) }

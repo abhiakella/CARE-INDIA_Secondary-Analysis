@@ -2,6 +2,10 @@
 # 5-fold stratified cross-validation of the empiric-failure classifiers (random forest; full and no-lag logistic regression).
 # Authors: Abhishek Akella, Anand Srinivasan  |  Dept of Pharmacology, AIIMS Bhubaneswar, India
 # License: MIT (see LICENSE)
+#
+# Random folds share temporal neighbours across partitions, so fold AUCs read higher than the rolling-origin
+# (walk-forward) scheme in consolidated_ml.py; they are reported as a conventional internal-validation reference only.
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +28,7 @@ except ImportError as e:
     print("Missing dependency:", e, file=sys.stderr)
     sys.exit(1)
 
+
 RANDOM_STATE     = 42
 HIGH_RISK_CUTOFF = 60
 N_SPLITS         = 5
@@ -36,9 +41,9 @@ GENETIC_MAP = {
     "E. coli":           {"india_cre_rate": 34.0, "has_ndm": 1, "is_oxa23_driven": 0},
 }
 NO_LAG_FEATURES = ["organism", "drug", "year", "log_tested"]
-FULL_FEATURES   = ["organism", "drug", "year", "log_tested", "lag_susc_pct",
-                   "india_cre_rate", "has_ndm", "is_oxa23_driven"]
+FULL_FEATURES   = ["organism", "drug", "year", "log_tested", "lag_susc_pct"]  # organism-level genetic constants removed (R1): collinear with organism identity
 MODELS = [("no_lag_LR", "lr", NO_LAG_FEATURES), ("full_LR", "lr", FULL_FEATURES), ("full_RF", "rf", FULL_FEATURES), ("full_HGB", "hgb", FULL_FEATURES)]
+
 
 def load_required(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
@@ -49,8 +54,10 @@ def load_required(csv_path: Path) -> pd.DataFrame:
         raise SystemExit(f"CSV missing columns: {miss}")
     return df
 
+
+# Lag = previous CALENDAR year's susceptibility on the full series, computed before any fold assignment
 def add_series_lag(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.reset_index(drop=True).copy()
+    df = df.reset_index(drop=True).copy()          # file row order kept, so the seeded folds are reproducible
     prev = df[["organism", "drug", "year", "susc_pct"]].copy()
     prev["year"] = prev["year"] + 1
     prev = prev.rename(columns={"susc_pct": "lag_susc_pct"})
@@ -59,12 +66,13 @@ def add_series_lag(df: pd.DataFrame) -> pd.DataFrame:
     gen = pd.DataFrame.from_dict(GENETIC_MAP, orient="index").reset_index().rename(columns={"index": "organism"})
     return df.merge(gen, on="organism", how="left")
 
+
 def make_pipe(kind: str, features: list[str]) -> Pipeline:
     cat = [c for c in ["organism", "drug"] if c in features]
     num = [c for c in ["year", "log_tested", "lag_susc_pct", "india_cre_rate"] if c in features]
     bin_ = [c for c in ["has_ndm", "is_oxa23_driven"] if c in features]
     prep = ColumnTransformer([("cat", OneHotEncoder(handle_unknown="ignore"), cat),
-                              ("num", StandardScaler(), num), ("bin", "passthrough", bin_)])
+                              ("num", StandardScaler(), num), ("bin", "passthrough", bin_)], sparse_threshold=0)
     if kind == "lr":
         clf = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=RANDOM_STATE)
     elif kind == "hgb":
@@ -73,6 +81,7 @@ def make_pipe(kind: str, features: list[str]) -> Pipeline:
         clf = RandomForestClassifier(n_estimators=300, max_depth=8, min_samples_leaf=2, class_weight="balanced",
                                      random_state=RANDOM_STATE, n_jobs=-1)
     return Pipeline([("prep", prep), ("clf", clf)])
+
 
 def main() -> None:
     global HIGH_RISK_CUTOFF
@@ -90,7 +99,7 @@ def main() -> None:
     rows: list[dict] = []
     for fold, (tr, te) in enumerate(skf.split(df, y), start=1):
         train, test = df.iloc[tr].copy(), df.iloc[te].copy()
-        fill = float(train["susc_pct"].mean())
+        fill = float(train["susc_pct"].mean())                       # training-fold mean only
         train["lag_susc_pct"] = train["lag_susc_pct"].fillna(fill)
         test["lag_susc_pct"]  = test["lag_susc_pct"].fillna(fill)
         for name, kind, feats in MODELS:
@@ -112,6 +121,7 @@ def main() -> None:
                        "first-year lags imputed with the training-fold mean only",
         "summary": summ.to_dict(orient="records"), "folds": rows}, indent=2), encoding="utf-8")
     print("Wrote:", args.out / "classifier_cv_metrics.json", "and", args.out / "table_classifier_cv_folds.csv")
+
 
 if __name__ == "__main__":
     main()

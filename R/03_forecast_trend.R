@@ -21,6 +21,7 @@ has_ens <- requireNamespace("forecast", quietly = TRUE) && requireNamespace("lme
 
 fl <- full_long %>% mutate(pair_id = paste(organism, drug, sep = " | ")) %>% arrange(organism, drug, year)
 
+# ---- trend model: logit(resistance %) ~ year, weights = isolates tested ---------------------------------
 fit_trend <- function(d) stats::lm(lgt(res_pct) ~ year, data = d, weights = tested)
 
 predict_trend <- function(m, years, w_new) {
@@ -33,6 +34,7 @@ predict_trend <- function(m, years, w_new) {
          lo95 = inv(p95[, "lwr"]), hi95 = inv(p95[, "upr"]))
 }
 
+# ---- ensemble comparator (auto.arima + hierarchical linear mixed model), used in the backtest only ------
 ensemble_forecast <- function(tr, fut) {
   h <- length(fut)
   ab <- tr %>% group_by(organism, drug, pair_id) %>% group_modify(function(.x, .y) {
@@ -56,6 +58,7 @@ ensemble_forecast <- function(tr, fut) {
     select(organism, drug, pair_id, year, ensemble)
 }
 
+# ---- 1. forecast 2025-2028 for every organism-drug pair -------------------------------------------------
 fc <- fl %>% group_by(organism, drug, pair_id) %>% group_modify(function(.x, .y) {
   m <- fit_trend(.x)
   predict_trend(m, FUTURE, mean(.x$tested)) %>%
@@ -69,6 +72,7 @@ s8 <- fc %>% filter(drug %in% CARB) %>%
             pi80 = sprintf("%.1f-%.1f", lo80, hi80), pi95 = sprintf("%.1f-%.1f", lo95, hi95))
 write_csv(s8, file.path(OUT, "table_S8_forecast_carbapenems.csv"))
 
+# ---- 2. rolling-origin backtest (origins 2021-2023, horizons 1-3) --------------------------------------
 bt <- list()
 for (O in ORIGINS) {
   tr <- fl %>% filter(year <= O); te <- fl %>% filter(year > O)
@@ -99,6 +103,7 @@ bt_summary <- bind_rows(
   bind_rows(lapply(sort(unique(bt$horizon)), function(h) summ(filter(bt, stratum == "carbapenem", horizon == h), paste0("carbapenems, horizon ", h)))))
 write_csv(bt_summary, file.path(OUT, "table_forecast_backtest_summary.csv"))
 
+# ---- 3. Figure 5: carbapenem forecasts ------------------------------------------------------------------
 obs <- fl %>% filter(drug %in% CARB) %>% select(organism, drug, year, res_pct)
 fitted_line <- fl %>% filter(drug %in% CARB) %>% group_by(organism, drug) %>% group_modify(function(.x, .y) {
   m <- fit_trend(.x); tibble(year = 2017:2024, fitted = inv(stats::predict(m, data.frame(year = 2017:2024)))) }) %>% ungroup()
@@ -126,6 +131,7 @@ fig5 <- ggplot() +
 ggsave(file.path(OUT, "fig5_forecast_trend.png"), fig5, width = 12, height = 10, dpi = 300)
 ggsave(file.path(OUT, "fig5_forecast_trend.pdf"), fig5, width = 12, height = 10)
 
+# ---- 4. run summary (computed, not asserted) ----------------------------------------------------------
 kp <- fc %>% filter(organism == "K. pneumoniae", drug == "Meropenem")
 a  <- bt_summary %>% filter(set == "all pairs"); cb <- bt_summary %>% filter(set == "carbapenems")
 writeLines(c(
